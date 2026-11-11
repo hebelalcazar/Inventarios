@@ -14,8 +14,34 @@
     <link rel="stylesheet" href="estilo.css">
 </head>
 <body>
+    <section id="authView" class="auth-view">
+        <div class="auth-card">
+            <img src="logo-moteros-popayan.png" alt="Logo Moteros Popayan" class="auth-logo">
+            <h1>Acceso al sistema</h1>
+            <p>Ingresa con tu correo y contrasena.</p>
+            <form id="loginForm" class="auth-form">
+                <label for="loginEmail">Correo electronico</label>
+                <input type="email" id="loginEmail" required autocomplete="username">
+                <label for="loginPassword">Contrasena</label>
+                <input type="password" id="loginPassword" required autocomplete="current-password">
+                <button type="submit" class="btn primary-btn full-width">Iniciar sesion</button>
+                <div id="loginStatus" class="status-message"></div>
+            </form>
+            <button type="button" id="showSetupAdmin" class="text-button">Configurar administrador inicial</button>
+            <form id="setupAdminForm" class="auth-form hidden">
+                <h3>Primer administrador</h3>
+                <input type="text" id="setupNombre" placeholder="Nombre completo" required>
+                <input type="text" id="setupCedula" placeholder="Cedula" required>
+                <input type="date" id="setupFechaNacimiento">
+                <input type="email" id="setupEmail" placeholder="Correo electronico" required>
+                <input type="password" id="setupPassword" placeholder="Contrasena (minimo 8 caracteres)" minlength="8" required>
+                <button type="submit" class="btn secondary-btn full-width">Crear administrador</button>
+                <div id="setupStatus" class="status-message"></div>
+            </form>
+        </div>
+    </section>
 
-    <div class="dashboard-container">
+    <div class="dashboard-container app-shell hidden">
         <!-- Barra Lateral -->
         <aside class="sidebar">
             <div class="logo">
@@ -29,10 +55,10 @@
                 <a href="#inventario" data-section="inventario">
                     <i class="fas fa-cubes"></i> Inventario Actual
                 </a>
-                <a href="#productos" data-section="productos">
+                <a href="#productos" data-section="productos" data-role="admin">
                     <i class="fas fa-box-open"></i> Registrar Producto
                 </a>
-                <a href="#categorias" data-section="categorias">
+                <a href="#categorias" data-section="categorias" data-role="admin">
                     <i class="fas fa-tags"></i> Categorías
                 </a>
                 <a href="#compras" data-section="compras">
@@ -44,10 +70,17 @@
                 <a href="#resumenes" data-section="resumenes">
                     <i class="fas fa-list-alt"></i> Resúmenes
                 </a>
-                <a href="#configuracion" data-section="configuracion">
+                <a href="#configuracion" data-section="configuracion" data-role="admin">
                     <i class="fas fa-cog"></i> Configuración
                 </a>
+                <a href="#usuarios" data-section="usuarios" data-role="admin">
+                    <i class="fas fa-users"></i> Usuarios
+                </a>
+                <a href="#perfil" data-section="perfil">
+                    <i class="fas fa-user-circle"></i> Perfil
+                </a>
             </nav>
+            <button id="logoutBtn" class="btn danger-btn sidebar-logout"><i class="fas fa-sign-out-alt"></i> Cerrar sesion</button>
         </aside>
 
         <!-- Contenido Principal -->
@@ -305,6 +338,42 @@
                     </button>
                 </div>
                 <div id="statusConfig" class="status-message"></div>
+            </section>
+            <section id="usuarios" class="content-section" data-role="admin">
+                <h2><i class="fas fa-users"></i> Gestion de Usuarios</h2>
+                <p>Administra las cuentas y sus permisos de acceso.</p>
+                <form id="usuarioForm" class="form-grid">
+                    <input type="hidden" id="u_id">
+                    <div class="form-group"><label for="u_nombre">Nombre:</label><input type="text" id="u_nombre" required></div>
+                    <div class="form-group"><label for="u_cedula">Cedula:</label><input type="text" id="u_cedula" required></div>
+                    <div class="form-group"><label for="u_fecha_nacimiento">Fecha de nacimiento:</label><input type="date" id="u_fecha_nacimiento"></div>
+                    <div class="form-group"><label for="u_email">Correo electronico:</label><input type="email" id="u_email" required></div>
+                    <div class="form-group"><label for="u_password">Contrasena:</label><input type="password" id="u_password" minlength="8" placeholder="Minimo 8 caracteres"></div>
+                    <div class="form-group"><label for="u_rol">Rol:</label><select id="u_rol"><option value="vendedor">Vendedor</option><option value="admin">Administrador</option></select></div>
+                    <button type="submit" class="btn primary-btn">Guardar usuario</button>
+                    <button type="button" id="cancelarUsuarioBtn" class="btn secondary-btn">Limpiar</button>
+                </form>
+                <div id="statusUsuarios" class="status-message"></div>
+                <div class="data-table-container"><table class="data-table"><thead><tr><th>Nombre</th><th>Cedula</th><th>Correo</th><th>Rol</th><th>Estado</th><th>Acciones</th></tr></thead><tbody id="usuariosTableBody"></tbody></table></div>
+            </section>
+
+            <section id="perfil" class="content-section">
+                <h2><i class="fas fa-user-circle"></i> Mi Perfil</h2>
+                <form id="perfilForm" class="form-grid">
+                    <div class="form-group"><label for="perfilNombre">Nombre:</label><input type="text" id="perfilNombre" required></div>
+                    <div class="form-group"><label for="perfilCedula">Cedula:</label><input type="text" id="perfilCedula" required></div>
+                    <div class="form-group"><label for="perfilFechaNacimiento">Fecha de nacimiento:</label><input type="date" id="perfilFechaNacimiento"></div>
+                    <div class="form-group"><label for="perfilEmail">Correo electronico:</label><input type="email" id="perfilEmail" required></div>
+                    <button type="submit" class="btn primary-btn full-width">Guardar perfil</button>
+                </form>
+                <div id="statusPerfil" class="status-message"></div>
+                <h3>Cambiar contrasena</h3>
+                <form id="passwordForm" class="form-grid">
+                    <div class="form-group"><label for="currentPassword">Contrasena actual:</label><input type="password" id="currentPassword" required></div>
+                    <div class="form-group"><label for="newPassword">Nueva contrasena:</label><input type="password" id="newPassword" minlength="8" required></div>
+                    <button type="submit" class="btn secondary-btn full-width">Cambiar contrasena</button>
+                </form>
+                <div id="statusPassword" class="status-message"></div>
             </section>
         </main>
     </div>

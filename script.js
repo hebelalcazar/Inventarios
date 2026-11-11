@@ -1,4 +1,27 @@
-     const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxGdrvl2vQxHb-Z6FaNnQ7ad8j4CxkUrKnfPiCyWaRzlERsctPAB4o9j-2embW1Xiwj/exec'; 
+     const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxGdrvl2vQxHb-Z6FaNnQ7ad8j4CxkUrKnfPiCyWaRzlERsctPAB4o9j-2embW1Xiwj/exec';
+     let authToken = localStorage.getItem('inventario_auth_token') || '';
+     let currentUser = JSON.parse(localStorage.getItem('inventario_user') || 'null');
+     let appInitialized = false;
+
+     // Agrega el token de sesion a las llamadas existentes sin duplicar logica HTTP.
+     const nativeFetch = window.fetch.bind(window);
+     window.fetch = function(input, options) {
+         options = options || {};
+         const url = typeof input === 'string' ? input : input.url;
+         if (authToken && url && url.indexOf(SCRIPT_URL) === 0) {
+             if (!options.method || options.method.toUpperCase() === 'GET') {
+                 const separator = url.indexOf('?') >= 0 ? '&' : '?';
+                 input = url + separator + 'token=' + encodeURIComponent(authToken);
+             } else if (typeof options.body === 'string') {
+                 try {
+                     const payload = JSON.parse(options.body);
+                     payload.token = authToken;
+                     options.body = JSON.stringify(payload);
+                 } catch (_) { /* solicitudes no JSON no requieren token aqui */ }
+             }
+         }
+         return nativeFetch(input, options);
+     };
       
   const mobileToggle = document.getElementById('mobileToggle');
     const sidebar = document.querySelector('.sidebar');
@@ -121,10 +144,76 @@
         let resumenFinancieroChart, tendenciasChart;
 
         document.addEventListener('DOMContentLoaded', () => {
-            setupNavigation();
-            loadInitialData();
-            setupForms();
+            setupAuth();
         });
+
+        function setupAuth() {
+            document.getElementById('loginForm').addEventListener('submit', handleLogin);
+            document.getElementById('setupAdminForm').addEventListener('submit', handleSetupAdmin);
+            document.getElementById('showSetupAdmin').addEventListener('click', () => {
+                document.getElementById('setupAdminForm').classList.toggle('hidden');
+            });
+            if (authToken) {
+                fetch(`${SCRIPT_URL}?action=perfil`).then(response => response.json()).then(data => {
+                    if (data.status === 'success') {
+                        currentUser = data.data;
+                        localStorage.setItem('inventario_user', JSON.stringify(currentUser));
+                        showApp();
+                    } else {
+                        clearSession();
+                    }
+                }).catch(clearSession);
+            }
+        }
+
+        async function handleLogin(event) {
+            event.preventDefault();
+            displayStatus('loginStatus', 'info', 'Validando credenciales...');
+            try {
+                const response = await nativeFetch(SCRIPT_URL, { method: 'POST', body: JSON.stringify({ action: 'login', email: document.getElementById('loginEmail').value, password: document.getElementById('loginPassword').value }), headers: { 'Content-Type': 'text/plain;charset=utf-8' } });
+                const data = await response.json();
+                if (data.status !== 'success') throw new Error(data.message);
+                authToken = data.token;
+                currentUser = data.user;
+                localStorage.setItem('inventario_auth_token', authToken);
+                localStorage.setItem('inventario_user', JSON.stringify(currentUser));
+                showApp();
+            } catch (error) {
+                displayStatus('loginStatus', 'error', error.message || 'No se pudo iniciar sesion.');
+            }
+        }
+
+        async function handleSetupAdmin(event) {
+            event.preventDefault();
+            const data = { action: 'setupAdmin', nombre: document.getElementById('setupNombre').value, cedula: document.getElementById('setupCedula').value, fecha_nacimiento: document.getElementById('setupFechaNacimiento').value, email: document.getElementById('setupEmail').value, password: document.getElementById('setupPassword').value };
+            try {
+                const response = await nativeFetch(SCRIPT_URL, { method: 'POST', body: JSON.stringify(data), headers: { 'Content-Type': 'text/plain;charset=utf-8' } });
+                const result = await response.json();
+                displayStatus('setupStatus', result.status === 'success' ? 'success' : 'error', result.message);
+                if (result.status === 'success') document.getElementById('setupAdminForm').classList.add('hidden');
+            } catch (error) { displayStatus('setupStatus', 'error', 'No se pudo crear el administrador inicial.'); }
+        }
+
+        function showApp() {
+            document.getElementById('authView').classList.add('hidden');
+            document.querySelector('.app-shell').classList.remove('hidden');
+            document.querySelectorAll('[data-role="admin"]').forEach(element => element.classList.toggle('hidden', currentUser.rol !== 'admin'));
+            if (!appInitialized) {
+                appInitialized = true;
+                setupNavigation();
+                if (currentUser.rol === 'admin') loadInitialData();
+                setupForms();
+                loadProfile();
+                if (currentUser.rol === 'admin') loadUsers();
+            }
+        }
+
+        function clearSession() {
+            authToken = '';
+            currentUser = null;
+            localStorage.removeItem('inventario_auth_token');
+            localStorage.removeItem('inventario_user');
+        }
         
         function setupNavigation() {
             const navLinks = document.querySelectorAll('.sidebar-nav a');
@@ -220,6 +309,11 @@
             document.getElementById('cargarInventarioBtn').addEventListener('click', loadInventario);
             document.getElementById('cargarDatosGraficosBtn').addEventListener('click', handleLoadDashboard);
             document.getElementById('calcularResumenBtn').addEventListener('click', calcularResumenFinanciero);
+            document.getElementById('usuarioForm').addEventListener('submit', saveUser);
+            document.getElementById('cancelarUsuarioBtn').addEventListener('click', resetUserForm);
+            document.getElementById('perfilForm').addEventListener('submit', saveProfile);
+            document.getElementById('passwordForm').addEventListener('submit', changePassword);
+            document.getElementById('logoutBtn').addEventListener('click', logout);
         }
 
         // ================= DASHBOARD FUNCTIONS =================
@@ -721,6 +815,77 @@
             document.getElementById('resetDBBtn').disabled = disabled;
         }
         
+        async function loadUsers() {
+            const response = await fetch(`${SCRIPT_URL}?action=usuarios`);
+            const data = await response.json();
+            if (data.status !== 'success') return displayStatus('statusUsuarios', 'error', data.message);
+            document.getElementById('usuariosTableBody').innerHTML = data.data.map(user => `<tr><td>${user.nombre}</td><td>${user.cedula}</td><td>${user.email}</td><td>${user.rol}</td><td>${user.activo ? 'Activo' : 'Inactivo'}</td><td><button class="btn secondary-btn btn-small" onclick="editUser('${user.id}')">Editar</button> <button class="btn danger-btn btn-small" onclick="removeUser('${user.id}')">Eliminar</button></td></tr>`).join('');
+        }
+
+        async function saveUser(event) {
+            event.preventDefault();
+            const id = document.getElementById('u_id').value;
+            const payload = { action: id ? 'actualizarUsuario' : 'crearUsuario', id: id, nombre: document.getElementById('u_nombre').value, cedula: document.getElementById('u_cedula').value, fecha_nacimiento: document.getElementById('u_fecha_nacimiento').value, email: document.getElementById('u_email').value, password: document.getElementById('u_password').value, rol: document.getElementById('u_rol').value, activo: true };
+            try {
+                const data = await (await fetch(SCRIPT_URL, { method: 'POST', body: JSON.stringify(payload), headers: { 'Content-Type': 'text/plain;charset=utf-8' } })).json();
+                displayStatus('statusUsuarios', data.status === 'success' ? 'success' : 'error', data.message);
+                if (data.status === 'success') { resetUserForm(); loadUsers(); }
+            } catch (error) { displayStatus('statusUsuarios', 'error', error.message); }
+        }
+
+        window.editUser = async function(id) {
+            const data = await (await fetch(`${SCRIPT_URL}?action=usuarios`)).json();
+            const user = (data.data || []).find(item => item.id === id);
+            if (!user) return;
+            document.getElementById('u_id').value = user.id;
+            document.getElementById('u_nombre').value = user.nombre;
+            document.getElementById('u_cedula').value = user.cedula;
+            document.getElementById('u_fecha_nacimiento').value = user.fecha_nacimiento ? String(user.fecha_nacimiento).substring(0, 10) : '';
+            document.getElementById('u_email').value = user.email;
+            document.getElementById('u_rol').value = user.rol;
+            document.getElementById('u_password').value = '';
+        };
+
+        window.removeUser = async function(id) {
+            if (!confirm('¿Deseas desactivar este usuario?')) return;
+            const data = await (await fetch(SCRIPT_URL, { method: 'POST', body: JSON.stringify({ action: 'eliminarUsuario', id: id }), headers: { 'Content-Type': 'text/plain;charset=utf-8' } })).json();
+            displayStatus('statusUsuarios', data.status === 'success' ? 'success' : 'error', data.message);
+            if (data.status === 'success') loadUsers();
+        };
+
+        function resetUserForm() { document.getElementById('usuarioForm').reset(); document.getElementById('u_id').value = ''; }
+
+        async function loadProfile() {
+            const data = await (await fetch(`${SCRIPT_URL}?action=perfil`)).json();
+            if (data.status !== 'success') return;
+            const user = data.data;
+            document.getElementById('perfilNombre').value = user.nombre;
+            document.getElementById('perfilCedula').value = user.cedula;
+            document.getElementById('perfilFechaNacimiento').value = user.fecha_nacimiento ? String(user.fecha_nacimiento).substring(0, 10) : '';
+            document.getElementById('perfilEmail').value = user.email;
+        }
+
+        async function saveProfile(event) {
+            event.preventDefault();
+            const payload = { action: 'actualizarPerfil', nombre: document.getElementById('perfilNombre').value, cedula: document.getElementById('perfilCedula').value, fecha_nacimiento: document.getElementById('perfilFechaNacimiento').value, email: document.getElementById('perfilEmail').value };
+            const data = await (await fetch(SCRIPT_URL, { method: 'POST', body: JSON.stringify(payload), headers: { 'Content-Type': 'text/plain;charset=utf-8' } })).json();
+            displayStatus('statusPerfil', data.status === 'success' ? 'success' : 'error', data.message);
+        }
+
+        async function changePassword(event) {
+            event.preventDefault();
+            const payload = { action: 'cambiarPassword', currentPassword: document.getElementById('currentPassword').value, newPassword: document.getElementById('newPassword').value };
+            const data = await (await fetch(SCRIPT_URL, { method: 'POST', body: JSON.stringify(payload), headers: { 'Content-Type': 'text/plain;charset=utf-8' } })).json();
+            displayStatus('statusPassword', data.status === 'success' ? 'success' : 'error', data.message);
+            if (data.status === 'success') document.getElementById('passwordForm').reset();
+        }
+
+        async function logout() {
+            try { await (await fetch(SCRIPT_URL, { method: 'POST', body: JSON.stringify({ action: 'logout' }), headers: { 'Content-Type': 'text/plain;charset=utf-8' } })).json(); } catch (_) {}
+            clearSession();
+            window.location.reload();
+        }
+
         function displayStatus(elementId, type, message) {
             const el = document.getElementById(elementId);
             el.style.display = 'block';

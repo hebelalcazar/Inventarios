@@ -9,6 +9,7 @@ const HOJA_PRODUCTOS = "Productos";
 const HOJA_COMPRAS = "Compras";
 const HOJA_VENTAS = "Ventas";
 const HOJA_RESUMEN = "resumen_diario";
+const HOJA_USUARIOS = "Usuarios";
 
 // Encabezados
 const CATEGORIAS_HEADERS = ["id", "nombre"];
@@ -16,6 +17,7 @@ const PRODUCTOS_HEADERS = ["id", "nombre", "código", "categoría", "precio_comp
 const COMPRAS_HEADERS = ["id", "producto_id", "cantidad", "precio_compra", "fecha", "proveedor"];
 const VENTAS_HEADERS = ["id", "producto_id", "cantidad", "precio_venta", "fecha", "cliente"];
 const RESUMEN_HEADERS = ["fecha", "total_ventas", "total_compras", "ganancia", "productos_vendidos"];
+const USUARIOS_HEADERS = ["id", "nombre", "cedula", "fecha_nacimiento", "email", "password_hash", "rol", "activo", "fecha_creado", "fecha_actualizado"];
 
 // --- FUNCIÓN CENTRAL PARA ACCEDER A LA HOJA ---
 function getSpreadsheet() {
@@ -34,21 +36,36 @@ function doGet(e) {
     const action = e.parameter.action;
     const query = e.parameter.query;
     const sheetName = e.parameter.sheetName;
+    let auth;
     let result;
 
     try {
+        auth = authenticate_(e.parameter.token);
         if (action === "iniciar" || action === "resetear") {
+            requireRole_(auth, ["admin"]);
             result = action === "iniciar" ? iniciarBaseDeDatos() : resetearBaseDeDatos();
         } else if (action === "getCategorias") {
+            requireRole_(auth, ["admin"]);
             result = getCategorias();
         } else if (action === "buscarProducto") {
+            requireRole_(auth, ["admin", "vendedor"]);
             result = buscarProducto(query); 
         } else if (action === "getInventario") {
+            requireRole_(auth, ["admin", "vendedor"]);
             result = getInventario();
         } else if (action === "getResumenDiario") {
+            requireRole_(auth, ["admin", "vendedor"]);
             result = getResumenDiario();
         } else if (action === "getData" && sheetName) {
-            result = getData(sheetName);
+            requireRole_(auth, ["admin", "vendedor"]);
+            if ([HOJA_VENTAS.toUpperCase(), HOJA_COMPRAS.toUpperCase()].indexOf(String(sheetName).toUpperCase()) === -1) throw new Error("Hoja no permitida.");
+            const normalizedSheetName = String(sheetName).toUpperCase() === HOJA_VENTAS.toUpperCase() ? HOJA_VENTAS : HOJA_COMPRAS;
+            result = getData(normalizedSheetName);
+        } else if (action === "usuarios") {
+            requireRole_(auth, ["admin"]);
+            result = listUsers_();
+        } else if (action === "perfil") {
+            result = getProfile_(auth);
         } else {
             result = { status: "error", message: `Acción GET '${action}' no válida o faltan parámetros.` };
         }
@@ -76,12 +93,42 @@ function doPost(e) {
         const action = requestData.action;
 
         let result;
-        if (action === "agregarCategoria") {
+        if (action === "login") {
+            result = login_(requestData);
+        } else if (action === "setupAdmin") {
+            result = setupInitialAdmin_(requestData);
+        } else if (action === "agregarCategoria") {
+            const auth = authenticate_(requestData.token);
+            requireRole_(auth, ["admin"]);
             result = agregarCategoria(requestData);
         } else if (action === "agregarProducto") {
+            const auth = authenticate_(requestData.token);
+            requireRole_(auth, ["admin"]);
             result = agregarProducto(requestData);
         } else if (action === "registrarTransaccion") {
+            const auth = authenticate_(requestData.token);
+            requireRole_(auth, ["admin", "vendedor"]);
             result = registrarTransaccion(requestData);
+        } else if (action === "crearUsuario") {
+            const auth = authenticate_(requestData.token);
+            requireRole_(auth, ["admin"]);
+            result = createUser_(requestData);
+        } else if (action === "actualizarUsuario") {
+            const auth = authenticate_(requestData.token);
+            requireRole_(auth, ["admin"]);
+            result = updateUser_(requestData);
+        } else if (action === "eliminarUsuario") {
+            const auth = authenticate_(requestData.token);
+            requireRole_(auth, ["admin"]);
+            result = deleteUser_(requestData, auth);
+        } else if (action === "actualizarPerfil") {
+            const auth = authenticate_(requestData.token);
+            result = updateProfile_(requestData, auth);
+        } else if (action === "cambiarPassword") {
+            const auth = authenticate_(requestData.token);
+            result = changePassword_(requestData, auth);
+        } else if (action === "logout") {
+            result = logout_(requestData.token);
         } else {
             result = { status: "error", message: "Acción POST no reconocida." };
         }
@@ -401,6 +448,7 @@ function iniciarBaseDeDatos() {
     msg.push(createOrResetSheet(ss, HOJA_COMPRAS, COMPRAS_HEADERS));
     msg.push(createOrResetSheet(ss, HOJA_VENTAS, VENTAS_HEADERS));
     msg.push(createOrResetSheet(ss, HOJA_RESUMEN, RESUMEN_HEADERS));
+    ensureUsersSheet_();
 
     return { status: "success", message: `Base de datos inicializada: ${msg.join(" ")}` };
 }
@@ -412,7 +460,7 @@ function resetearBaseDeDatos() {
     // Se eliminan todas las pestañas excepto la primera ("Hoja 1")
     ss.getSheets().forEach(sheet => {
         const sheetName = sheet.getName();
-        if (sheetName !== "Hoja 1") {
+        if (sheetName !== "Hoja 1" && sheetName !== HOJA_USUARIOS) {
             ss.deleteSheet(sheet);
             msg.push(`Pestaña '${sheetName}' eliminada.`);
         }
@@ -426,4 +474,180 @@ function resetearBaseDeDatos() {
     msg.push(createOrResetSheet(ss, HOJA_RESUMEN, RESUMEN_HEADERS));
 
     return { status: "success", message: `Base de datos reseteada completamente: ${msg.join(" ")}` };
+}
+
+// ----------------------------------------------------------------------
+// AUTENTICACION, ROLES Y USUARIOS
+// ----------------------------------------------------------------------
+function authError_(message) {
+    const error = new Error(message);
+    error.code = "AUTH";
+    return error;
+}
+
+function hashPassword_(password) {
+    const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(password), Utilities.Charset.UTF_8);
+    return bytes.map(function(byte) {
+        const value = byte < 0 ? byte + 256 : byte;
+        return (value < 16 ? "0" : "") + value.toString(16);
+    }).join("");
+}
+
+function ensureUsersSheet_() {
+    const ss = getSpreadsheet();
+    let sheet = ss.getSheetByName(HOJA_USUARIOS);
+    if (!sheet) {
+        sheet = ss.insertSheet(HOJA_USUARIOS);
+        sheet.getRange(1, 1, 1, USUARIOS_HEADERS.length).setValues([USUARIOS_HEADERS]);
+        sheet.setFrozenRows(1);
+    }
+    return sheet;
+}
+
+function rowToUser_(row) {
+    return {
+        id: String(row[0] || ""),
+        nombre: String(row[1] || ""),
+        cedula: String(row[2] || ""),
+        fecha_nacimiento: row[3] || "",
+        email: String(row[4] || "").toLowerCase(),
+        password_hash: String(row[5] || ""),
+        rol: String(row[6] || "vendedor").toLowerCase(),
+        activo: row[7] === true || String(row[7]).toLowerCase() === "true",
+        fecha_creado: row[8] || "",
+        fecha_actualizado: row[9] || ""
+    };
+}
+
+function publicUser_(user) {
+    return {
+        id: user.id,
+        nombre: user.nombre,
+        cedula: user.cedula,
+        fecha_nacimiento: user.fecha_nacimiento,
+        email: user.email,
+        rol: user.rol,
+        activo: user.activo,
+        fecha_creado: user.fecha_creado
+    };
+}
+
+function findUser_(identifier) {
+    const sheet = ensureUsersSheet_();
+    const values = sheet.getDataRange().getValues();
+    const key = String(identifier || "").trim().toLowerCase();
+    for (let i = 1; i < values.length; i++) {
+        const user = rowToUser_(values[i]);
+        if (user.email === key || user.cedula.toLowerCase() === key || user.id.toLowerCase() === key) {
+            return { user: user, row: i + 1 };
+        }
+    }
+    return null;
+}
+
+function login_(data) {
+    const found = findUser_(data.email);
+    if (!found || !found.user.activo || found.user.password_hash !== hashPassword_(data.password)) {
+        throw authError_("Correo o contraseña incorrectos.");
+    }
+    const token = Utilities.getUuid() + Utilities.getUuid().replace(/-/g, "");
+    CacheService.getScriptCache().put(token, JSON.stringify(publicUser_(found.user)), 21600);
+    return { status: "success", token: token, user: publicUser_(found.user) };
+}
+
+function authenticate_(token) {
+    if (!token) throw authError_("Sesión no iniciada o expirada.");
+    const raw = CacheService.getScriptCache().get(String(token));
+    if (!raw) throw authError_("Sesión no iniciada o expirada.");
+    return JSON.parse(raw);
+}
+
+function requireRole_(user, roles) {
+    if (!user || roles.indexOf(user.rol) === -1) throw authError_("No tienes permisos para realizar esta acción.");
+}
+
+function logout_(token) {
+    if (token) CacheService.getScriptCache().remove(String(token));
+    return { status: "success", message: "Sesión cerrada." };
+}
+
+function setupInitialAdmin_(data) {
+    const lock = LockService.getScriptLock();
+    lock.waitLock(10000);
+    try {
+        const sheet = ensureUsersSheet_();
+        if (sheet.getLastRow() > 1) throw new Error("El administrador inicial ya fue creado.");
+        validateUserData_(data, true);
+        const now = new Date();
+        sheet.appendRow([generateUniqueAppId(), data.nombre.trim(), String(data.cedula).trim(), data.fecha_nacimiento || "", data.email.trim().toLowerCase(), hashPassword_(data.password), "admin", true, now, now]);
+        return { status: "success", message: "Administrador inicial creado correctamente." };
+    } finally {
+        lock.releaseLock();
+    }
+}
+
+function validateUserData_(data, requirePassword) {
+    if (!data.nombre || !data.cedula || !data.email || (requirePassword && !data.password)) throw new Error("Nombre, cédula, correo y contraseña son obligatorios.");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(data.email))) throw new Error("El correo electrónico no es válido.");
+    if (requirePassword && String(data.password).length < 8) throw new Error("La contraseña debe tener mínimo 8 caracteres.");
+    if (data.rol && ["admin", "vendedor"].indexOf(String(data.rol).toLowerCase()) === -1) throw new Error("Rol no válido.");
+}
+
+function createUser_(data) {
+    validateUserData_(data, true);
+    if (findUser_(data.email) || findUser_(data.cedula)) throw new Error("Ya existe un usuario con ese correo o cédula.");
+    const now = new Date();
+    ensureUsersSheet_().appendRow([generateUniqueAppId(), data.nombre.trim(), String(data.cedula).trim(), data.fecha_nacimiento || "", data.email.trim().toLowerCase(), hashPassword_(data.password), String(data.rol || "vendedor").toLowerCase(), data.activo !== false, now, now]);
+    return { status: "success", message: "Usuario creado correctamente." };
+}
+
+function listUsers_() {
+    const sheet = ensureUsersSheet_();
+    if (sheet.getLastRow() < 2) return { status: "success", data: [] };
+    return { status: "success", data: sheet.getDataRange().getValues().slice(1).map(rowToUser_).map(publicUser_) };
+}
+
+function updateUser_(data) {
+    validateUserData_(data, false);
+    const found = findUser_(data.id);
+    if (!found) throw new Error("Usuario no encontrado.");
+    const duplicate = findUser_(data.email);
+    if (duplicate && duplicate.user.id !== found.user.id) throw new Error("El correo ya pertenece a otro usuario.");
+    const current = found.user;
+    const row = [current.id, data.nombre.trim(), String(data.cedula).trim(), data.fecha_nacimiento || "", data.email.trim().toLowerCase(), data.password ? hashPassword_(data.password) : current.password_hash, String(data.rol || current.rol).toLowerCase(), data.activo !== false, current.fecha_creado, new Date()];
+    ensureUsersSheet_().getRange(found.row, 1, 1, USUARIOS_HEADERS.length).setValues([row]);
+    return { status: "success", message: "Usuario actualizado correctamente." };
+}
+
+function deleteUser_(data, auth) {
+    if (data.id === auth.id) throw new Error("No puedes eliminar tu propio usuario.");
+    const found = findUser_(data.id);
+    if (!found) throw new Error("Usuario no encontrado.");
+    ensureUsersSheet_().getRange(found.row, 8).setValue(false);
+    return { status: "success", message: "Usuario desactivado correctamente." };
+}
+
+function getProfile_(auth) {
+    const found = findUser_(auth.id);
+    if (!found) throw authError_("Usuario no encontrado.");
+    return { status: "success", data: publicUser_(found.user) };
+}
+
+function updateProfile_(data, auth) {
+    const found = findUser_(auth.id);
+    if (!found) throw authError_("Usuario no encontrado.");
+    if (!data.nombre || !data.cedula || !data.email) throw new Error("Nombre, cédula y correo son obligatorios.");
+    const current = found.user;
+    ensureUsersSheet_().getRange(found.row, 2, 1, 4).setValues([[data.nombre.trim(), String(data.cedula).trim(), data.fecha_nacimiento || "", data.email.trim().toLowerCase()]]);
+    ensureUsersSheet_().getRange(found.row, 10).setValue(new Date());
+    return { status: "success", message: "Perfil actualizado correctamente." };
+}
+
+function changePassword_(data, auth) {
+    if (!data.currentPassword || !data.newPassword || String(data.newPassword).length < 8) throw new Error("La contraseña actual y una nueva contraseña de mínimo 8 caracteres son obligatorias.");
+    const found = findUser_(auth.id);
+    if (!found || found.user.password_hash !== hashPassword_(data.currentPassword)) throw authError_("La contraseña actual no es correcta.");
+    ensureUsersSheet_().getRange(found.row, 6).setValue(hashPassword_(data.newPassword));
+    ensureUsersSheet_().getRange(found.row, 10).setValue(new Date());
+    return { status: "success", message: "Contraseña cambiada correctamente." };
 }
