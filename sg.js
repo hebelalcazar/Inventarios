@@ -1,7 +1,7 @@
 // ***************************************************************
 // ⚠️ 1. REEMPLAZA ESTE VALOR con el ID real de tu Google Sheet
 // ***************************************************************
-const SPREADSHEET_ID = "1j4vfZHoaq2YqG63tAuz97gb79IWoOmJFPWlls1eZ64k"; 
+const SPREADSHEET_ID = "1jSob3--tbiVLC1NbOb1RBnj29YwtPsCZMiuu-NLVh2o"; 
 
 // Nombres de las pestañas
 const HOJA_CATEGORIAS = "Categorias";
@@ -96,7 +96,7 @@ function doPost(e) {
         if (action === "login") {
             result = login_(requestData);
         } else if (action === "setupAdmin") {
-            result = setupInitialAdmin_(requestData);
+            result = { status: "error", message: "La configuración pública del administrador inicial está deshabilitada." };
         } else if (action === "agregarCategoria") {
             const auth = authenticate_(requestData.token);
             requireRole_(auth, ["admin"]);
@@ -569,21 +569,6 @@ function requireRole_(user, roles) {
 function logout_(token) {
     if (token) CacheService.getScriptCache().remove(String(token));
     return { status: "success", message: "Sesión cerrada." };
-}
-
-function setupInitialAdmin_(data) {
-    const lock = LockService.getScriptLock();
-    lock.waitLock(10000);
-    try {
-        const sheet = ensureUsersSheet_();
-        if (sheet.getLastRow() > 1) throw new Error("El administrador inicial ya fue creado.");
-        validateUserData_(data, true);
-        const now = new Date();
-        sheet.appendRow([generateUniqueAppId(), data.nombre.trim(), String(data.cedula).trim(), data.fecha_nacimiento || "", data.email.trim().toLowerCase(), hashPassword_(data.password), "admin", true, now, now]);
-        return { status: "success", message: "Administrador inicial creado correctamente." };
-    } finally {
-        lock.releaseLock();
-    }
 }
 
 function validateUserData_(data, requirePassword) {

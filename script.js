@@ -149,10 +149,6 @@
 
         function setupAuth() {
             document.getElementById('loginForm').addEventListener('submit', handleLogin);
-            document.getElementById('setupAdminForm').addEventListener('submit', handleSetupAdmin);
-            document.getElementById('showSetupAdmin').addEventListener('click', () => {
-                document.getElementById('setupAdminForm').classList.toggle('hidden');
-            });
             if (authToken) {
                 fetch(`${SCRIPT_URL}?action=perfil`).then(response => response.json()).then(data => {
                     if (data.status === 'success') {
@@ -181,17 +177,6 @@
             } catch (error) {
                 displayStatus('loginStatus', 'error', error.message || 'No se pudo iniciar sesion.');
             }
-        }
-
-        async function handleSetupAdmin(event) {
-            event.preventDefault();
-            const data = { action: 'setupAdmin', nombre: document.getElementById('setupNombre').value, cedula: document.getElementById('setupCedula').value, fecha_nacimiento: document.getElementById('setupFechaNacimiento').value, email: document.getElementById('setupEmail').value, password: document.getElementById('setupPassword').value };
-            try {
-                const response = await nativeFetch(SCRIPT_URL, { method: 'POST', body: JSON.stringify(data), headers: { 'Content-Type': 'text/plain;charset=utf-8' } });
-                const result = await response.json();
-                displayStatus('setupStatus', result.status === 'success' ? 'success' : 'error', result.message);
-                if (result.status === 'success') document.getElementById('setupAdminForm').classList.add('hidden');
-            } catch (error) { displayStatus('setupStatus', 'error', 'No se pudo crear el administrador inicial.'); }
         }
 
         function showApp() {
