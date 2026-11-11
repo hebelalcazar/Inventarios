@@ -79,10 +79,11 @@
   box-shadow: var(--shadow-xl);
 }
 
-.auth-card h1 { margin-bottom: var(--space-2); color: var(--primary-dark); }
+.auth-card h1 { margin-bottom: var(--space-2); color: var(--primary-dark); text-align: center; }
 .auth-card p { color: var(--gray-600); margin-bottom: var(--space-6); }
 .auth-logo { display: block; width: 170px; height: 130px; object-fit: contain; margin: 0 auto var(--space-4); }
 .auth-form { display: grid; gap: var(--space-3); margin-bottom: var(--space-4); }
+.auth-form .btn.full-width { width: min(100%, 250px); justify-self: center; }
 .auth-form label { font-weight: 600; color: var(--gray-700); }
 .auth-form input { width: 100%; min-height: 42px; padding: var(--space-3); border: 1px solid var(--gray-300); border-radius: var(--radius); }
 .text-button { width: 100%; border: 0; background: none; color: var(--primary-color); cursor: pointer; padding: var(--space-2); }
