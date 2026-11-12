@@ -759,6 +759,16 @@
         }
         
         function renderInventoryTable(products) {
+            inventarioFiltrado = products;
+            const result = InventoryModule.renderTable('inventarioTableBody', products, inventarioPagina, inventarioPorPagina);
+            inventarioPagina = result.page;
+            const legacyControls = document.getElementById('inventarioPaginacion');
+            legacyControls.classList.toggle('hidden', products.length <= inventarioPorPagina);
+            document.getElementById('inventarioPaginaInfo').textContent = `Pagina ${inventarioPagina} de ${result.totalPages}`;
+            document.getElementById('inventarioAnterior').disabled = inventarioPagina <= 1;
+            document.getElementById('inventarioSiguiente').disabled = inventarioPagina >= result.totalPages;
+            return;
+
             const tableBody = document.getElementById('inventarioTableBody');
             inventarioFiltrado = products;
             const totalPaginas = Math.max(1, Math.ceil(products.length / inventarioPorPagina));
@@ -777,11 +787,17 @@
         }
 
         function filterInventory() {
-            const query = document.getElementById('inventarioFiltro').value.toLowerCase().trim();
+            const query = document.getElementById('inventarioFiltro').value;
             const talla = document.getElementById('inventarioTallaFiltro').value;
+            inventarioPagina = 1;
+            renderInventoryTable(InventoryModule.filter(inventarioCache, query, talla));
+            return;
+
+            const legacyQuery = document.getElementById('inventarioFiltro').value.toLowerCase().trim();
+            const legacyTalla = document.getElementById('inventarioTallaFiltro').value;
             const filtered = inventarioCache.filter(p => {
                 const text = `${p.nombre || ''} ${p['cÃ³digo'] || ''} ${p.id || ''}`.toLowerCase();
-                return text.includes(query) && (!talla || String(p.talla || 'N/A') === talla);
+                return text.includes(legacyQuery) && (!legacyTalla || String(p.talla || 'N/A') === legacyTalla);
             });
             inventarioPagina = 1;
             renderInventoryTable(filtered);
