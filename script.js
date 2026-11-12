@@ -674,6 +674,7 @@
                 precio: document.getElementById(`${prefix}_precio_${type === 'compra' ? 'compra' : 'venta'}`).value,
                 type: type,
                 extra_data: document.getElementById(`${prefix}_${type === 'compra' ? 'proveedor' : 'cliente'}`).value,
+                metodo_pago: document.getElementById(`${prefix}_metodo_pago`).value,
             };
 
             try {

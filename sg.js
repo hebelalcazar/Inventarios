@@ -14,8 +14,8 @@ const HOJA_USUARIOS = "Usuarios";
 // Encabezados
 const CATEGORIAS_HEADERS = ["id", "nombre"];
 const PRODUCTOS_HEADERS = ["id", "nombre", "código", "categoría", "precio_compra", "precio_venta", "stock", "fecha_creado"];
-const COMPRAS_HEADERS = ["id", "producto_id", "cantidad", "precio_compra", "fecha", "proveedor"];
-const VENTAS_HEADERS = ["id", "producto_id", "cantidad", "precio_venta", "fecha", "cliente"];
+const COMPRAS_HEADERS = ["id", "producto_id", "cantidad", "precio_compra", "fecha", "proveedor", "metodo_pago"];
+const VENTAS_HEADERS = ["id", "producto_id", "cantidad", "precio_venta", "fecha", "cliente", "metodo_pago"];
 const RESUMEN_HEADERS = ["fecha", "total_ventas", "total_compras", "ganancia", "productos_vendidos"];
 const USUARIOS_HEADERS = ["id", "nombre", "cedula", "fecha_nacimiento", "email", "password_hash", "rol", "activo", "fecha_creado", "fecha_actualizado"];
 
@@ -244,6 +244,13 @@ function agregarProducto(data) {
 // ----------------------------------------------------------------------
 // FUNCIONES DE GESTIÓN DE TRANSACCIONES (COMPRAS/VENTAS)
 // ----------------------------------------------------------------------
+function ensurePaymentColumn_(sheet) {
+    const headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 1)).getValues()[0];
+    if (headers.indexOf("metodo_pago") === -1) {
+        sheet.getRange(1, headers.length + 1).setValue("metodo_pago");
+    }
+}
+
 function registrarTransaccion(data) {
     const ss = getSpreadsheet();
     const action = data.type; // 'compra' o 'venta'
@@ -254,6 +261,11 @@ function registrarTransaccion(data) {
 
     if (!sheet || !sheetProductos) {
         return { status: "error", message: `Una o más pestañas necesarias no existen. Inicie la Base de Datos.` };
+    }
+
+    ensurePaymentColumn_(sheet);
+    if (["efectivo", "transferencia"].indexOf(String(data.metodo_pago || "").toLowerCase()) === -1) {
+        return { status: "error", message: "Seleccione un metodo de pago valido." };
     }
 
     // 1. Validar producto y obtener fila actual
@@ -295,7 +307,8 @@ function registrarTransaccion(data) {
         cantidad,
         precioTransaccion,
         new Date(),
-        data.extra_data || ''
+        data.extra_data || '',
+        String(data.metodo_pago).toLowerCase()
     ];
 
     try {
