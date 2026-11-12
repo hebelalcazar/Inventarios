@@ -187,7 +187,13 @@
         function showApp() {
             document.getElementById('authView').classList.add('hidden');
             document.querySelector('.app-shell').classList.remove('hidden');
-            document.getElementById('userSessionInfo').innerHTML = `<strong>${currentUser.nombre}</strong><small>${currentUser.rol === 'admin' ? 'Administrador' : 'Vendedor'}</small>`;
+            const sessionInfo = document.getElementById('userSessionInfo');
+            sessionInfo.textContent = '';
+            const sessionName = document.createElement('strong');
+            sessionName.textContent = currentUser.nombre || '';
+            const sessionRole = document.createElement('small');
+            sessionRole.textContent = currentUser.rol === 'admin' ? 'Administrador' : 'Vendedor';
+            sessionInfo.append(sessionName, sessionRole);
             document.querySelectorAll('[data-role="admin"]').forEach(element => element.classList.toggle('hidden', currentUser.rol !== 'admin'));
             if (!appInitialized) {
                 appInitialized = true;
@@ -576,7 +582,7 @@
 
             const data = {};
             Array.from(form.elements).forEach(input => {
-                if (input.id && input.id.startsWith('p_') || input.id.startsWith('c_')) {
+                if (input.id && (input.id.startsWith('p_') || input.id.startsWith('c_'))) {
                     data[input.id.replace(/p_|c_/, '')] = input.value;
                 }
             });
@@ -726,7 +732,7 @@
 
                 if (data.status === 'success' && data.data && data.data.length > 0) {
                     displayStatus('statusInventario', 'success', `Inventario cargado: ${data.data.length} productos.`);
-                    tableBody.innerHTML = data.data.map(p => {
+                    if (false) tableBody.innerHTML = data.data.map(p => {
                         const stockStyle = p.stock < 5 ? 'style="color: var(--danger-color); font-weight: bold;"' : '';
                         return `
                             <tr>
@@ -980,5 +986,8 @@
             const el = document.getElementById(elementId);
             el.style.display = 'block';
             el.className = `status-message ${type}`;
-            el.innerHTML = `<i class="fas fa-${type === 'success' ? 'check' : type === 'error' ? 'times' : type === 'warning' ? 'exclamation-triangle' : 'info'}-circle"></i> ${message}`;
+            el.textContent = '';
+            const icon = document.createElement('i');
+            icon.className = `fas fa-${type === 'success' ? 'check' : type === 'error' ? 'times' : type === 'warning' ? 'exclamation-triangle' : 'info'}-circle`;
+            el.append(icon, document.createTextNode(` ${String(message || '')}`));
         }

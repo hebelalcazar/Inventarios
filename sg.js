@@ -165,16 +165,19 @@ function agregarCategoria(data, auth) {
         return { status: "error", message: `La pestaña '${HOJA_CATEGORIAS}' no existe. Inicie la Base de Datos.` };
     }
 
+    const nombre = String(data.nombre || "").trim();
+    if (!nombre) throw new Error("El nombre de la categoria es obligatorio.");
+    if (nombre.length > 100) throw new Error("El nombre de la categoria no puede superar 100 caracteres.");
     const newId = generateUniqueAppId();
     
     const newRow = [
         newId,
-        data.nombre
+        nombre
     ];
 
     try {
         sheet.appendRow(newRow);
-        registrarAuditoria_(auth, "CREAR_CATEGORIA", HOJA_CATEGORIAS, newId, { nombre: data.nombre });
+        registrarAuditoria_(auth, "CREAR_CATEGORIA", HOJA_CATEGORIAS, newId, { nombre: nombre });
         return { status: "success", message: `Categoría '${data.nombre}' agregada (ID: ${newId}).` };
     } catch (e) {
         return { status: "error", message: `Error al escribir categoría: ${e.message}` };
@@ -237,6 +240,16 @@ function agregarProducto(data, auth) {
     if (["S", "M", "L", "XL", "XXL", "N/A"].indexOf(String(data.talla || "").toUpperCase()) === -1) {
         return { status: "error", message: "Seleccione una talla valida." };
     }
+    const nombre = String(data.nombre || "").trim();
+    const codigo = String(data.codigo || "").trim();
+    const categoria = String(data.categoria || "").trim();
+    const precioCompra = Number(data.precio_compra);
+    const precioVenta = Number(data.precio_venta);
+    const stock = Number(data.stock);
+    if (!nombre || !codigo || !categoria) throw new Error("Nombre, codigo y categoria son obligatorios.");
+    if (nombre.length > 150 || codigo.length > 80 || categoria.length > 100) throw new Error("Los datos del producto superan la longitud permitida.");
+    if (!Number.isFinite(precioCompra) || precioCompra < 0 || !Number.isFinite(precioVenta) || precioVenta < 0) throw new Error("Los precios deben ser numeros validos mayores o iguales a cero.");
+    if (!Number.isInteger(stock) || stock < 0) throw new Error("El stock debe ser un numero entero mayor o igual a cero.");
     const ss = getSpreadsheet();
     const sheet = ss.getSheetByName(HOJA_PRODUCTOS);
 
@@ -244,16 +257,20 @@ function agregarProducto(data, auth) {
         return { status: "error", message: `La pestaña '${HOJA_PRODUCTOS}' no existe. Inicie la Base de Datos.` };
     }
     
+    const existingProducts = getData(HOJA_PRODUCTOS);
+    if (existingProducts.status === "success" && existingProducts.data.some(function(product) {
+        return String(product["cÃ³digo"] || product.codigo || "").trim().toLowerCase() === codigo.toLowerCase();
+    })) throw new Error("Ya existe un producto con ese codigo.");
     const newId = generateUniqueAppId();
 
     const newRow = [
         newId,
-        data.nombre,
-        data.codigo,
-        data.categoria,
-        parseFloat(data.precio_compra),
-        parseFloat(data.precio_venta),
-        parseInt(data.stock),
+        nombre,
+        codigo,
+        categoria,
+        precioCompra,
+        precioVenta,
+        stock,
         new Date(),
         String(data.talla).toUpperCase()
     ];
@@ -302,6 +319,7 @@ function registrarTransaccion(data, auth) {
 function registrarTransaccionProtegida_(data, auth) {
     const ss = getSpreadsheet();
     const action = data.type; // 'compra' o 'venta'
+    if (action !== "compra" && action !== "venta") return { status: "error", message: "El tipo de transaccion no es valido." };
     const isCompra = action === "compra";
     const sheetName = isCompra ? HOJA_COMPRAS : HOJA_VENTAS;
     const sheet = ss.getSheetByName(sheetName);
@@ -337,8 +355,10 @@ function registrarTransaccionProtegida_(data, auth) {
     const precioCompraColIndex = 4;
     const precioVentaColIndex = 5;
     
-    const cantidad = parseInt(data.cantidad);
-    const precioTransaccion = parseFloat(data.precio);
+    const cantidad = Number(data.cantidad);
+    const precioTransaccion = Number(data.precio);
+    if (!Number.isInteger(cantidad) || cantidad <= 0) return { status: "error", message: "La cantidad debe ser un entero mayor que cero." };
+    if (!Number.isFinite(precioTransaccion) || precioTransaccion < 0) return { status: "error", message: "El precio debe ser un numero valido mayor o igual a cero." };
     
     let stockActual = parseFloat(rowData[stockColIndex]) || 0;
     let nuevoStock;
@@ -727,6 +747,14 @@ function validateUserData_(data, requirePassword) {
     if (data.rol && ["admin", "vendedor"].indexOf(String(data.rol).toLowerCase()) === -1) throw new Error("Rol no válido.");
 }
 
+function countActiveAdmins_() {
+    const sheet = ensureUsersSheet_();
+    if (sheet.getLastRow() < 2) return 0;
+    return sheet.getDataRange().getValues().slice(1).map(rowToUser_).filter(function(user) {
+        return user.activo && user.rol === "admin";
+    }).length;
+}
+
 function createUser_(data, auth) {
     validateUserData_(data, true);
     if (findUser_(data.email) || findUser_(data.cedula)) throw new Error("Ya existe un usuario con ese correo o cédula.");
@@ -748,8 +776,13 @@ function updateUser_(data, auth) {
     if (!found) throw new Error("Usuario no encontrado.");
     const duplicate = findUser_(data.email);
     if (duplicate && duplicate.user.id !== found.user.id) throw new Error("El correo ya pertenece a otro usuario.");
+    const duplicateCedula = findUser_(data.cedula);
+    if (duplicateCedula && duplicateCedula.user.id !== found.user.id) throw new Error("La cedula ya pertenece a otro usuario.");
     const current = found.user;
-    const row = [current.id, data.nombre.trim(), String(data.cedula).trim(), data.fecha_nacimiento || "", data.email.trim().toLowerCase(), data.password ? hashPassword_(data.password) : current.password_hash, String(data.rol || current.rol).toLowerCase(), data.activo !== false, current.fecha_creado, new Date()];
+    const nextRole = String(data.rol || current.rol).toLowerCase();
+    const nextActive = data.activo !== false;
+    if (current.rol === "admin" && current.activo && (!nextActive || nextRole !== "admin") && countActiveAdmins_() <= 1) throw new Error("Debe existir al menos un administrador activo.");
+    const row = [current.id, data.nombre.trim(), String(data.cedula).trim(), data.fecha_nacimiento || "", data.email.trim().toLowerCase(), data.password ? hashPassword_(data.password) : current.password_hash, nextRole, nextActive, current.fecha_creado, new Date()];
     ensureUsersSheet_().getRange(found.row, 1, 1, USUARIOS_HEADERS.length).setValues([row]);
     registrarAuditoria_(auth, "ACTUALIZAR_USUARIO", HOJA_USUARIOS, found.user.id, { rol: row[6] });
     return { status: "success", message: "Usuario actualizado correctamente." };
@@ -759,6 +792,7 @@ function deleteUser_(data, auth) {
     if (data.id === auth.id) throw new Error("No puedes eliminar tu propio usuario.");
     const found = findUser_(data.id);
     if (!found) throw new Error("Usuario no encontrado.");
+    if (found.user.rol === "admin" && found.user.activo && countActiveAdmins_() <= 1) throw new Error("No puedes desactivar el ultimo administrador activo.");
     ensureUsersSheet_().getRange(found.row, 8).setValue(false);
     registrarAuditoria_(auth, "DESACTIVAR_USUARIO", HOJA_USUARIOS, found.user.id, {});
     return { status: "success", message: "Usuario desactivado correctamente." };
@@ -771,6 +805,11 @@ function getProfile_(auth) {
 }
 
 function updateProfile_(data, auth) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(data.email || ""))) throw new Error("El correo electronico no es valido.");
+    const duplicateEmail = findUser_(data.email);
+    if (duplicateEmail && duplicateEmail.user.id !== auth.id) throw new Error("El correo ya pertenece a otro usuario.");
+    const duplicateCedula = findUser_(data.cedula);
+    if (duplicateCedula && duplicateCedula.user.id !== auth.id) throw new Error("La cedula ya pertenece a otro usuario.");
     const found = findUser_(auth.id);
     if (!found) throw authError_("Usuario no encontrado.");
     if (!data.nombre || !data.cedula || !data.email) throw new Error("Nombre, cédula y correo son obligatorios.");

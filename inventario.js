@@ -38,5 +38,6 @@
         });
     }
 
+    window.escapeHtml = escapeHtml;
     window.InventoryModule = { renderTable: renderTable, filter: filter };
 })();
