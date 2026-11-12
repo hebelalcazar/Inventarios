@@ -10,6 +10,7 @@ const HOJA_COMPRAS = "Compras";
 const HOJA_VENTAS = "Ventas";
 const HOJA_RESUMEN = "resumen_diario";
 const HOJA_USUARIOS = "Usuarios";
+const HOJA_AUDITORIA = "Auditoria";
 
 // Encabezados
 const CATEGORIAS_HEADERS = ["id", "nombre"];
@@ -18,6 +19,7 @@ const COMPRAS_HEADERS = ["id", "producto_id", "cantidad", "precio_compra", "fech
 const VENTAS_HEADERS = ["id", "producto_id", "cantidad", "precio_venta", "fecha", "cliente", "metodo_pago", "talla"];
 const RESUMEN_HEADERS = ["fecha", "total_ventas", "total_compras", "ganancia", "productos_vendidos"];
 const USUARIOS_HEADERS = ["id", "nombre", "cedula", "fecha_nacimiento", "email", "password_hash", "rol", "activo", "fecha_creado", "fecha_actualizado"];
+const AUDITORIA_HEADERS = ["id", "fecha", "usuario_id", "usuario_email", "rol", "accion", "entidad", "entidad_id", "detalle"];
 
 // --- FUNCIÓN CENTRAL PARA ACCEDER A LA HOJA ---
 function getSpreadsheet() {
@@ -100,23 +102,23 @@ function doPost(e) {
         } else if (action === "agregarCategoria") {
             const auth = authenticate_(requestData.token);
             requireRole_(auth, ["admin"]);
-            result = agregarCategoria(requestData);
+            result = agregarCategoria(requestData, auth);
         } else if (action === "agregarProducto") {
             const auth = authenticate_(requestData.token);
             requireRole_(auth, ["admin"]);
-            result = agregarProducto(requestData);
+            result = agregarProducto(requestData, auth);
         } else if (action === "registrarTransaccion") {
             const auth = authenticate_(requestData.token);
             requireRole_(auth, ["admin", "vendedor"]);
-            result = registrarTransaccion(requestData);
+            result = registrarTransaccion(requestData, auth);
         } else if (action === "crearUsuario") {
             const auth = authenticate_(requestData.token);
             requireRole_(auth, ["admin"]);
-            result = createUser_(requestData);
+            result = createUser_(requestData, auth);
         } else if (action === "actualizarUsuario") {
             const auth = authenticate_(requestData.token);
             requireRole_(auth, ["admin"]);
-            result = updateUser_(requestData);
+            result = updateUser_(requestData, auth);
         } else if (action === "eliminarUsuario") {
             const auth = authenticate_(requestData.token);
             requireRole_(auth, ["admin"]);
@@ -151,7 +153,7 @@ function getCategorias() {
     return getData(HOJA_CATEGORIAS);
 }
 
-function agregarCategoria(data) {
+function agregarCategoria(data, auth) {
     const ss = getSpreadsheet();
     const sheet = ss.getSheetByName(HOJA_CATEGORIAS);
 
@@ -168,6 +170,7 @@ function agregarCategoria(data) {
 
     try {
         sheet.appendRow(newRow);
+        registrarAuditoria_(auth, "CREAR_CATEGORIA", HOJA_CATEGORIAS, newId, { nombre: data.nombre });
         return { status: "success", message: `Categoría '${data.nombre}' agregada (ID: ${newId}).` };
     } catch (e) {
         return { status: "error", message: `Error al escribir categoría: ${e.message}` };
@@ -223,7 +226,7 @@ function ensureProductSizeColumn_(sheet) {
     }
 }
 
-function agregarProducto(data) {
+function agregarProducto(data, auth) {
     
     const sheetForSize = getSpreadsheet().getSheetByName(HOJA_PRODUCTOS);
     ensureProductSizeColumn_(sheetForSize);
@@ -253,6 +256,7 @@ function agregarProducto(data) {
 
     try {
         sheet.appendRow(newRow);
+        registrarAuditoria_(auth, "CREAR_PRODUCTO", HOJA_PRODUCTOS, newId, { nombre: data.nombre, talla: data.talla });
         return { status: "success", message: `Producto '${data.nombre}' registrado con éxito. ID: ${newId}` };
     } catch (e) {
         return { status: "error", message: `Error al escribir producto: ${e.message}` };
@@ -274,7 +278,19 @@ function ensureTransactionSizeColumn_(sheet) {
     if (headers.indexOf("talla") === -1) sheet.getRange(1, headers.length + 1).setValue("talla");
 }
 
-function registrarTransaccion(data) {
+function registrarTransaccion(data, auth) {
+    const lock = LockService.getScriptLock();
+    let locked = false;
+    try {
+        lock.waitLock(30000);
+        locked = true;
+        return registrarTransaccionProtegida_(data, auth);
+    } finally {
+        if (locked) lock.releaseLock();
+    }
+}
+
+function registrarTransaccionProtegida_(data, auth) {
     const ss = getSpreadsheet();
     const action = data.type; // 'compra' o 'venta'
     const isCompra = action === "compra";
@@ -365,6 +381,15 @@ function registrarTransaccion(data) {
                 sheetProductos.getRange(rowIndex + 1, precioVentaColIndex + 1).setValue(precioTransaccion);
             }
         }
+
+        registrarAuditoria_(auth, isCompra ? "REGISTRAR_COMPRA" : "REGISTRAR_VENTA", isCompra ? HOJA_COMPRAS : HOJA_VENTAS, transaccionId, {
+            producto_id: data.producto_id,
+            cantidad: cantidad,
+            precio: precioTransaccion,
+            metodo_pago: data.metodo_pago,
+            talla: data.talla,
+            stock_resultante: nuevoStock
+        });
 
         return { 
             status: "success", 
@@ -494,6 +519,7 @@ function iniciarBaseDeDatos() {
     msg.push(createOrResetSheet(ss, HOJA_VENTAS, VENTAS_HEADERS));
     msg.push(createOrResetSheet(ss, HOJA_RESUMEN, RESUMEN_HEADERS));
     ensureUsersSheet_();
+    ensureAuditSheet_();
 
     return { status: "success", message: `Base de datos inicializada: ${msg.join(" ")}` };
 }
@@ -505,7 +531,7 @@ function resetearBaseDeDatos() {
     // Se eliminan todas las pestañas excepto la primera ("Hoja 1")
     ss.getSheets().forEach(sheet => {
         const sheetName = sheet.getName();
-        if (sheetName !== "Hoja 1" && sheetName !== HOJA_USUARIOS) {
+        if (sheetName !== "Hoja 1" && sheetName !== HOJA_USUARIOS && sheetName !== HOJA_AUDITORIA) {
             ss.deleteSheet(sheet);
             msg.push(`Pestaña '${sheetName}' eliminada.`);
         }
@@ -547,6 +573,29 @@ function ensureUsersSheet_() {
         sheet.setFrozenRows(1);
     }
     return sheet;
+}
+
+function ensureAuditSheet_() {
+    const ss = getSpreadsheet();
+    let sheet = ss.getSheetByName(HOJA_AUDITORIA);
+    if (!sheet) {
+        sheet = ss.insertSheet(HOJA_AUDITORIA);
+        sheet.getRange(1, 1, 1, AUDITORIA_HEADERS.length).setValues([AUDITORIA_HEADERS]);
+        sheet.setFrozenRows(1);
+    }
+    return sheet;
+}
+
+function registrarAuditoria_(auth, accion, entidad, entidadId, detalle) {
+    const user = auth || {};
+    try {
+        ensureAuditSheet_().appendRow([
+            generateUniqueAppId(), new Date(), user.id || "", user.email || "", user.rol || "",
+            accion, entidad, entidadId || "", JSON.stringify(detalle || {})
+        ]);
+    } catch (error) {
+        console.error("No se pudo registrar auditoria: " + error.message);
+    }
 }
 
 function rowToUser_(row) {
@@ -623,11 +672,12 @@ function validateUserData_(data, requirePassword) {
     if (data.rol && ["admin", "vendedor"].indexOf(String(data.rol).toLowerCase()) === -1) throw new Error("Rol no válido.");
 }
 
-function createUser_(data) {
+function createUser_(data, auth) {
     validateUserData_(data, true);
     if (findUser_(data.email) || findUser_(data.cedula)) throw new Error("Ya existe un usuario con ese correo o cédula.");
     const now = new Date();
     ensureUsersSheet_().appendRow([generateUniqueAppId(), data.nombre.trim(), String(data.cedula).trim(), data.fecha_nacimiento || "", data.email.trim().toLowerCase(), hashPassword_(data.password), String(data.rol || "vendedor").toLowerCase(), data.activo !== false, now, now]);
+    registrarAuditoria_(auth, "CREAR_USUARIO", HOJA_USUARIOS, data.email, { rol: String(data.rol || "vendedor").toLowerCase() });
     return { status: "success", message: "Usuario creado correctamente." };
 }
 
@@ -637,7 +687,7 @@ function listUsers_() {
     return { status: "success", data: sheet.getDataRange().getValues().slice(1).map(rowToUser_).map(publicUser_) };
 }
 
-function updateUser_(data) {
+function updateUser_(data, auth) {
     validateUserData_(data, false);
     const found = findUser_(data.id);
     if (!found) throw new Error("Usuario no encontrado.");
@@ -646,6 +696,7 @@ function updateUser_(data) {
     const current = found.user;
     const row = [current.id, data.nombre.trim(), String(data.cedula).trim(), data.fecha_nacimiento || "", data.email.trim().toLowerCase(), data.password ? hashPassword_(data.password) : current.password_hash, String(data.rol || current.rol).toLowerCase(), data.activo !== false, current.fecha_creado, new Date()];
     ensureUsersSheet_().getRange(found.row, 1, 1, USUARIOS_HEADERS.length).setValues([row]);
+    registrarAuditoria_(auth, "ACTUALIZAR_USUARIO", HOJA_USUARIOS, found.user.id, { rol: row[6] });
     return { status: "success", message: "Usuario actualizado correctamente." };
 }
 
@@ -654,6 +705,7 @@ function deleteUser_(data, auth) {
     const found = findUser_(data.id);
     if (!found) throw new Error("Usuario no encontrado.");
     ensureUsersSheet_().getRange(found.row, 8).setValue(false);
+    registrarAuditoria_(auth, "DESACTIVAR_USUARIO", HOJA_USUARIOS, found.user.id, {});
     return { status: "success", message: "Usuario desactivado correctamente." };
 }
 

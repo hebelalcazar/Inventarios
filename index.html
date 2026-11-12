@@ -37,6 +37,7 @@
                 <img src="logo-moteros-popayan.png" alt="Logo Moteros Popayán" class="company-logo">
                 <span class="logo-label">Moteros Popayán</span>
             </div>
+            <div id="userSessionInfo" class="user-session-info"></div>
             <nav class="sidebar-nav">
                 <a href="#dashboard" class="active" data-section="dashboard">
                     <i class="fas fa-chart-line"></i> Dashboard
@@ -135,9 +136,16 @@
         <button id="cargarInventarioBtn" class="btn secondary-btn">
             <i class="fas fa-sync"></i> Refrescar Inventario
         </button>
+        <input type="search" id="inventarioFiltro" class="table-filter" placeholder="Buscar por nombre o codigo...">
+        <select id="inventarioTallaFiltro" class="table-filter">
+            <option value="">Todas las tallas</option>
+            <option value="S">S</option><option value="M">M</option><option value="L">L</option>
+            <option value="XL">XL</option><option value="XXL">XXL</option><option value="N/A">N/A</option>
+        </select>
     </div>
     
     <div id="statusInventario" class="status-message"></div>
+    <div id="alertasInventario" class="status-message warning hidden"></div>
     
     <!-- Contenedor responsive para la tabla -->
 <!-- En la sección de Inventario, reemplaza el contenedor de tabla -->
@@ -416,6 +424,7 @@
     <i class="fas fa-bars"></i>
 </button>
 
+    <script src="api.js"></script>
     <script src="script.js"></script>
 
     

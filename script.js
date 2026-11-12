@@ -9,7 +9,7 @@
          options = options || {};
          const url = typeof input === 'string' ? input : input.url;
          if (authToken && url && url.indexOf(SCRIPT_URL) === 0) {
-             if (!options.method || options.method.toUpperCase() === 'GET') {
+            if ((!options.method || options.method.toUpperCase() === 'GET') && url.indexOf('token=') === -1) {
                  const separator = url.indexOf('?') >= 0 ? '&' : '?';
                  input = url + separator + 'token=' + encodeURIComponent(authToken);
              } else if (typeof options.body === 'string') {
@@ -141,6 +141,7 @@
     setTimeout(adjustButtons, 500);
      
      let productDataCache = {};
+        let inventarioCache = [];
         let resumenFinancieroChart, tendenciasChart;
 
         document.addEventListener('DOMContentLoaded', () => {
@@ -182,6 +183,7 @@
         function showApp() {
             document.getElementById('authView').classList.add('hidden');
             document.querySelector('.app-shell').classList.remove('hidden');
+            document.getElementById('userSessionInfo').innerHTML = `<strong>${currentUser.nombre}</strong><small>${currentUser.rol === 'admin' ? 'Administrador' : 'Vendedor'}</small>`;
             document.querySelectorAll('[data-role="admin"]').forEach(element => element.classList.toggle('hidden', currentUser.rol !== 'admin'));
             if (!appInitialized) {
                 appInitialized = true;
@@ -292,6 +294,8 @@
 
             // Dashboard
             document.getElementById('cargarInventarioBtn').addEventListener('click', loadInventario);
+            document.getElementById('inventarioFiltro').addEventListener('input', filterInventory);
+            document.getElementById('inventarioTallaFiltro').addEventListener('change', filterInventory);
             document.getElementById('cargarDatosGraficosBtn').addEventListener('click', handleLoadDashboard);
             document.getElementById('calcularResumenBtn').addEventListener('click', calcularResumenFinanciero);
             document.getElementById('usuarioForm').addEventListener('submit', saveUser);
@@ -709,8 +713,7 @@
             tableBody.innerHTML = '<tr><td colspan="7">Cargando...</td></tr>';
 
             try {
-                const response = await fetch(`${SCRIPT_URL}?action=getInventario`);
-                const data = await response.json();
+                const data = await InventoryApi.get('getInventario');
 
                 if (data.status === 'success' && data.data && data.data.length > 0) {
                     displayStatus('statusInventario', 'success', `Inventario cargado: ${data.data.length} productos.`);
@@ -728,6 +731,13 @@
                             </tr>
                         `;
                     }).join('');
+                    inventarioCache = data.data;
+                    renderInventoryTable(inventarioCache);
+                    const lowStock = inventarioCache.filter(p => Number(p.stock) < 5);
+                    const alert = document.getElementById('alertasInventario');
+                    alert.classList.remove('hidden');
+                    alert.style.display = lowStock.length ? 'block' : 'none';
+                    if (lowStock.length) alert.innerHTML = `<i class="fas fa-exclamation-triangle"></i> ${lowStock.length} producto(s) tienen stock bajo.`;
                 } else {
                     displayStatus('statusInventario', 'warning', data.message);
                     tableBody.innerHTML = '<tr><td colspan="7">No hay productos en inventario.</td></tr>';
@@ -738,6 +748,24 @@
             }
         }
         
+        function renderInventoryTable(products) {
+            const tableBody = document.getElementById('inventarioTableBody');
+            tableBody.innerHTML = products.map(p => {
+                const stockStyle = Number(p.stock) < 5 ? 'style="color: var(--danger-color); font-weight: bold;"' : '';
+                return `<tr><td>${p.id}</td><td>${p.nombre}</td><td>${p['cÃ³digo']}</td><td>${p['categorÃ­a']}</td><td>${p.talla || 'N/A'}</td><td ${stockStyle}>${p.stock}</td><td>$${Number(p.precio_venta).toFixed(2)}</td></tr>`;
+            }).join('') || '<tr><td colspan="7">No hay productos que coincidan con el filtro.</td></tr>';
+        }
+
+        function filterInventory() {
+            const query = document.getElementById('inventarioFiltro').value.toLowerCase().trim();
+            const talla = document.getElementById('inventarioTallaFiltro').value;
+            const filtered = inventarioCache.filter(p => {
+                const text = `${p.nombre || ''} ${p['cÃ³digo'] || ''} ${p.id || ''}`.toLowerCase();
+                return text.includes(query) && (!talla || String(p.talla || 'N/A') === talla);
+            });
+            renderInventoryTable(filtered);
+        }
+
         async function loadSummary(type) {
             const sheetName = type === 'Ventas' ? 'VENTAS' : 'COMPRAS';
             displayStatus('statusResumen', 'info', `Cargando resumen de ${sheetName}...`);

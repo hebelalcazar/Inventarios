@@ -89,6 +89,10 @@
 .text-button { width: 100%; border: 0; background: none; color: var(--primary-color); cursor: pointer; padding: var(--space-2); }
 .btn-small { min-width: auto; padding: var(--space-2) var(--space-3); height: auto; font-size: .75rem; }
 .sidebar-logout { margin: var(--space-8) var(--space-4) 0; width: calc(100% - 2rem); }
+.user-session-info { margin: -var(--space-4) var(--space-5) var(--space-5); padding: var(--space-3); color: rgba(255,255,255,.9); background: rgba(255,255,255,.08); border-radius: var(--radius); text-align: center; }
+.user-session-info strong, .user-session-info small { display: block; }
+.user-session-info small { margin-top: 2px; opacity: .75; text-transform: capitalize; }
+.table-filter { min-height: 40px; padding: var(--space-2) var(--space-3); border: 1px solid var(--gray-300); border-radius: var(--radius); background: white; }
 
 /* ============ RESET Y BASE ============ */
 * {
