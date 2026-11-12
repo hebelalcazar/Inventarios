@@ -17,5 +17,11 @@
         return true;
     }
 
-    window.InventoryReports = { exportTableToCsv };
+    function printSummary() {
+        document.body.classList.add('printing-report');
+        window.print();
+        window.onafterprint = function () { document.body.classList.remove('printing-report'); };
+    }
+
+    window.InventoryReports = { exportTableToCsv, printSummary };
 })();

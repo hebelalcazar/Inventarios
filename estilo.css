@@ -93,6 +93,19 @@
 .user-session-info strong, .user-session-info small { display: block; }
 .user-session-info small { margin-top: 2px; opacity: .75; text-transform: capitalize; }
 .table-filter { min-height: 40px; padding: var(--space-2) var(--space-3); border: 1px solid var(--gray-300); border-radius: var(--radius); background: white; }
+.pagination-controls { display: flex; align-items: center; justify-content: center; gap: var(--space-4); margin-top: var(--space-4); }
+.pagination-controls span { color: var(--gray-600); font-weight: 600; }
+
+@media print {
+  body.printing-report * { visibility: hidden !important; }
+  body.printing-report #resumenes,
+  body.printing-report #resumenes * { visibility: visible !important; }
+  body.printing-report #resumenes { position: absolute; inset: 0; padding: 1rem; }
+  body.printing-report #resumenes .button-group,
+  body.printing-report #resumenes .admin-action,
+  body.printing-report #resumenes .status-message { display: none !important; }
+  body.printing-report #resumenTable { display: table !important; }
+}
 
 /* ============ RESET Y BASE ============ */
 * {

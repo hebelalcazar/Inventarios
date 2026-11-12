@@ -142,6 +142,9 @@
      
      let productDataCache = {};
         let inventarioCache = [];
+        let inventarioFiltrado = [];
+        let inventarioPagina = 1;
+        const inventarioPorPagina = 10;
         let currentSummaryType = '';
         let resumenFinancieroChart, tendenciasChart;
 
@@ -293,7 +296,10 @@
             document.getElementById('resumenVentasBtn').addEventListener('click', () => loadSummary('Ventas'));
             document.getElementById('resumenComprasBtn').addEventListener('click', () => loadSummary('Compras'));
             document.getElementById('exportarResumenBtn').addEventListener('click', exportCurrentSummary);
+            document.getElementById('imprimirResumenBtn').addEventListener('click', () => InventoryReports.printSummary());
             document.getElementById('anularForm').addEventListener('submit', handleCancellation);
+            document.getElementById('inventarioAnterior').addEventListener('click', () => changeInventoryPage(-1));
+            document.getElementById('inventarioSiguiente').addEventListener('click', () => changeInventoryPage(1));
 
             // Dashboard
             document.getElementById('cargarInventarioBtn').addEventListener('click', loadInventario);
@@ -735,6 +741,7 @@
                         `;
                     }).join('');
                     inventarioCache = data.data;
+                    inventarioPagina = 1;
                     renderInventoryTable(inventarioCache);
                     const lowStock = inventarioCache.filter(p => Number(p.stock) < 5);
                     const alert = document.getElementById('alertasInventario');
@@ -753,10 +760,20 @@
         
         function renderInventoryTable(products) {
             const tableBody = document.getElementById('inventarioTableBody');
-            tableBody.innerHTML = products.map(p => {
+            inventarioFiltrado = products;
+            const totalPaginas = Math.max(1, Math.ceil(products.length / inventarioPorPagina));
+            inventarioPagina = Math.min(inventarioPagina, totalPaginas);
+            const inicio = (inventarioPagina - 1) * inventarioPorPagina;
+            const pagina = products.slice(inicio, inicio + inventarioPorPagina);
+            tableBody.innerHTML = pagina.map(p => {
                 const stockStyle = Number(p.stock) < 5 ? 'style="color: var(--danger-color); font-weight: bold;"' : '';
                 return `<tr><td>${p.id}</td><td>${p.nombre}</td><td>${p['cÃ³digo']}</td><td>${p['categorÃ­a']}</td><td>${p.talla || 'N/A'}</td><td ${stockStyle}>${p.stock}</td><td>$${Number(p.precio_venta).toFixed(2)}</td></tr>`;
             }).join('') || '<tr><td colspan="7">No hay productos que coincidan con el filtro.</td></tr>';
+            const controls = document.getElementById('inventarioPaginacion');
+            controls.classList.toggle('hidden', products.length <= inventarioPorPagina);
+            document.getElementById('inventarioPaginaInfo').textContent = `Pagina ${inventarioPagina} de ${totalPaginas}`;
+            document.getElementById('inventarioAnterior').disabled = inventarioPagina <= 1;
+            document.getElementById('inventarioSiguiente').disabled = inventarioPagina >= totalPaginas;
         }
 
         function filterInventory() {
@@ -766,12 +783,19 @@
                 const text = `${p.nombre || ''} ${p['cÃ³digo'] || ''} ${p.id || ''}`.toLowerCase();
                 return text.includes(query) && (!talla || String(p.talla || 'N/A') === talla);
             });
+            inventarioPagina = 1;
             renderInventoryTable(filtered);
+        }
+
+        function changeInventoryPage(delta) {
+            inventarioPagina += delta;
+            renderInventoryTable(inventarioFiltrado);
         }
 
         async function loadSummary(type) {
             currentSummaryType = type;
             document.getElementById('exportarResumenBtn').disabled = false;
+            document.getElementById('imprimirResumenBtn').disabled = false;
             const sheetName = type === 'Ventas' ? 'VENTAS' : 'COMPRAS';
             displayStatus('statusResumen', 'info', `Cargando resumen de ${sheetName}...`);
             const table = document.getElementById('resumenTable');
