@@ -149,12 +149,13 @@
                 <th>Nombre</th>
                 <th>Código</th>
                 <th>Categoría</th>
+                <th>Talla</th>
                 <th>Stock</th>
                 <th>P. Venta</th>
             </tr>
         </thead>
         <tbody id="inventarioTableBody">
-            <tr><td colspan="6">Presiona "Refrescar Inventario" para cargar los datos.</td></tr>
+            <tr><td colspan="7">Presiona "Refrescar Inventario" para cargar los datos.</td></tr>
         </tbody>
     </table>
     <div class="scroll-hint hidden" id="inventarioScrollHint">
@@ -180,6 +181,18 @@
                         <label for="p_categoria">Categoría:</label>
                         <select id="p_categoria" required>
                             <option value="" disabled selected>Cargando categorías...</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="p_talla">Talla:</label>
+                        <select id="p_talla" required>
+                            <option value="" disabled selected>Seleccione una talla</option>
+                            <option value="S">S</option>
+                            <option value="M">M</option>
+                            <option value="L">L</option>
+                            <option value="XL">XL</option>
+                            <option value="XXL">XXL</option>
+                            <option value="N/A">N/A</option>
                         </select>
                     </div>
                     <div class="form-group">
@@ -251,6 +264,14 @@
                             <option value="transferencia">Transferencia</option>
                         </select>
                     </div>
+                    <div class="form-group">
+                        <label for="co_talla">Talla:</label>
+                        <select id="co_talla" required>
+                            <option value="" disabled selected>Seleccione una talla</option>
+                            <option value="S">S</option><option value="M">M</option><option value="L">L</option>
+                            <option value="XL">XL</option><option value="XXL">XXL</option><option value="N/A">N/A</option>
+                        </select>
+                    </div>
 
                     <div class="product-details hidden full-width" id="co_product_details"></div>
                     <input type="hidden" id="co_producto_id">
@@ -288,6 +309,14 @@
                             <option value="" disabled selected>Seleccione un metodo</option>
                             <option value="efectivo">Efectivo</option>
                             <option value="transferencia">Transferencia</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="v_talla">Talla:</label>
+                        <select id="v_talla" required>
+                            <option value="" disabled selected>Seleccione una talla</option>
+                            <option value="S">S</option><option value="M">M</option><option value="L">L</option>
+                            <option value="XL">XL</option><option value="XXL">XXL</option><option value="N/A">N/A</option>
                         </select>
                     </div>
 

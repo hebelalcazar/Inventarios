@@ -638,11 +638,13 @@
             detailDiv.innerHTML = `
                 <p><b>ID:</b> ${product.id} | <b>Producto:</b> ${product.nombre} (Cód: ${product.código})</p>
                 <p><b>Categoría:</b> ${product.categoría}</p>
+                <p><b>Talla:</b> ${product.talla || 'N/A'}</p>
                 <p><b>Stock Actual:</b> <span ${stockStyle}>${product.stock}</span></p>
                 <p><b>${priceLabel}:</b> $${parseFloat(price).toFixed(2)}</p>
             `;
             
             document.getElementById(`${prefix}_precio_${isCompra ? 'compra' : 'venta'}`).value = parseFloat(price).toFixed(2);
+            document.getElementById(`${prefix}_talla`).value = product.talla || 'N/A';
             
             if (!isCompra && product.stock < 5) {
                 detailDiv.innerHTML += `<p class="status-message warning" style="display:block; margin-top: 10px;">Stock bajo. Solo quedan ${product.stock} unidades.</p>`;
@@ -675,6 +677,7 @@
                 type: type,
                 extra_data: document.getElementById(`${prefix}_${type === 'compra' ? 'proveedor' : 'cliente'}`).value,
                 metodo_pago: document.getElementById(`${prefix}_metodo_pago`).value,
+                talla: document.getElementById(`${prefix}_talla`).value,
             };
 
             try {
@@ -703,7 +706,7 @@
         async function loadInventario() {
             displayStatus('statusInventario', 'info', 'Cargando datos de inventario...');
             const tableBody = document.getElementById('inventarioTableBody');
-            tableBody.innerHTML = '<tr><td colspan="6">Cargando...</td></tr>';
+            tableBody.innerHTML = '<tr><td colspan="7">Cargando...</td></tr>';
 
             try {
                 const response = await fetch(`${SCRIPT_URL}?action=getInventario`);
@@ -719,6 +722,7 @@
                                 <td>${p.nombre}</td>
                                 <td>${p.código}</td>
                                 <td>${p.categoría}</td>
+                                <td>${p.talla || 'N/A'}</td>
                                 <td ${stockStyle}>${p.stock}</td>
                                 <td>$${p.precio_venta.toFixed(2)}</td>
                             </tr>
@@ -726,11 +730,11 @@
                     }).join('');
                 } else {
                     displayStatus('statusInventario', 'warning', data.message);
-                    tableBody.innerHTML = '<tr><td colspan="6">No hay productos en inventario.</td></tr>';
+                    tableBody.innerHTML = '<tr><td colspan="7">No hay productos en inventario.</td></tr>';
                 }
             } catch (error) {
                 displayStatus('statusInventario', 'error', `Error al cargar inventario: ${error.message}`);
-                tableBody.innerHTML = '<tr><td colspan="6">Error al cargar datos.</td></tr>';
+                tableBody.innerHTML = '<tr><td colspan="7">Error al cargar datos.</td></tr>';
             }
         }
         

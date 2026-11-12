@@ -14,8 +14,8 @@ const HOJA_USUARIOS = "Usuarios";
 // Encabezados
 const CATEGORIAS_HEADERS = ["id", "nombre"];
 const PRODUCTOS_HEADERS = ["id", "nombre", "código", "categoría", "precio_compra", "precio_venta", "stock", "fecha_creado"];
-const COMPRAS_HEADERS = ["id", "producto_id", "cantidad", "precio_compra", "fecha", "proveedor", "metodo_pago"];
-const VENTAS_HEADERS = ["id", "producto_id", "cantidad", "precio_venta", "fecha", "cliente", "metodo_pago"];
+const COMPRAS_HEADERS = ["id", "producto_id", "cantidad", "precio_compra", "fecha", "proveedor", "metodo_pago", "talla"];
+const VENTAS_HEADERS = ["id", "producto_id", "cantidad", "precio_venta", "fecha", "cliente", "metodo_pago", "talla"];
 const RESUMEN_HEADERS = ["fecha", "total_ventas", "total_compras", "ganancia", "productos_vendidos"];
 const USUARIOS_HEADERS = ["id", "nombre", "cedula", "fecha_nacimiento", "email", "password_hash", "rol", "activo", "fecha_creado", "fecha_actualizado"];
 
@@ -178,10 +178,12 @@ function agregarCategoria(data) {
 // FUNCIONES DE GESTIÓN DE PRODUCTOS Y BÚSQUEDA
 // ----------------------------------------------------------------------
 function getInventario() {
+    ensureProductSizeColumn_(getSpreadsheet().getSheetByName(HOJA_PRODUCTOS));
     return getData(HOJA_PRODUCTOS);
 }
 
 function buscarProducto(query) {
+    ensureProductSizeColumn_(getSpreadsheet().getSheetByName(HOJA_PRODUCTOS));
     const data = getData(HOJA_PRODUCTOS);
 
     if (data.status !== 'success') return data;
@@ -212,7 +214,22 @@ function buscarProducto(query) {
     }
 }
 
+function ensureProductSizeColumn_(sheet) {
+    if (!sheet) return;
+    const headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 1)).getValues()[0];
+    if (headers.indexOf("talla") === -1) {
+        sheet.getRange(1, headers.length + 1).setValue("talla");
+        if (sheet.getLastRow() > 1) sheet.getRange(2, headers.length + 1, sheet.getLastRow() - 1, 1).setValue("N/A");
+    }
+}
+
 function agregarProducto(data) {
+    
+    const sheetForSize = getSpreadsheet().getSheetByName(HOJA_PRODUCTOS);
+    ensureProductSizeColumn_(sheetForSize);
+    if (["S", "M", "L", "XL", "XXL", "N/A"].indexOf(String(data.talla || "").toUpperCase()) === -1) {
+        return { status: "error", message: "Seleccione una talla valida." };
+    }
     const ss = getSpreadsheet();
     const sheet = ss.getSheetByName(HOJA_PRODUCTOS);
 
@@ -230,7 +247,8 @@ function agregarProducto(data) {
         parseFloat(data.precio_compra),
         parseFloat(data.precio_venta),
         parseInt(data.stock),
-        new Date()
+        new Date(),
+        String(data.talla).toUpperCase()
     ];
 
     try {
@@ -251,6 +269,11 @@ function ensurePaymentColumn_(sheet) {
     }
 }
 
+function ensureTransactionSizeColumn_(sheet) {
+    const headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 1)).getValues()[0];
+    if (headers.indexOf("talla") === -1) sheet.getRange(1, headers.length + 1).setValue("talla");
+}
+
 function registrarTransaccion(data) {
     const ss = getSpreadsheet();
     const action = data.type; // 'compra' o 'venta'
@@ -263,7 +286,9 @@ function registrarTransaccion(data) {
         return { status: "error", message: `Una o más pestañas necesarias no existen. Inicie la Base de Datos.` };
     }
 
+    ensureProductSizeColumn_(sheetProductos);
     ensurePaymentColumn_(sheet);
+    ensureTransactionSizeColumn_(sheet);
     if (["efectivo", "transferencia"].indexOf(String(data.metodo_pago || "").toLowerCase()) === -1) {
         return { status: "error", message: "Seleccione un metodo de pago valido." };
     }
@@ -271,6 +296,12 @@ function registrarTransaccion(data) {
     // 1. Validar producto y obtener fila actual
     const { rowData, rowIndex } = findProductRow(sheetProductos, data.producto_id);
     
+    if (rowIndex !== -1) {
+        const tallaProducto = String(rowData[8] || "N/A").toUpperCase();
+        if (String(data.talla || "").toUpperCase() !== tallaProducto) {
+            return { status: "error", message: `La talla seleccionada no coincide con la talla del producto (${tallaProducto}).` };
+        }
+    }
     if (rowIndex === -1) {
         return { status: "error", message: `Producto ID ${data.producto_id} no encontrado en inventario.` };
     }
@@ -308,7 +339,8 @@ function registrarTransaccion(data) {
         precioTransaccion,
         new Date(),
         data.extra_data || '',
-        String(data.metodo_pago).toLowerCase()
+        String(data.metodo_pago).toLowerCase(),
+        String(data.talla).toUpperCase()
     ];
 
     try {
