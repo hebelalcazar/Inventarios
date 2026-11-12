@@ -350,9 +350,26 @@
         <button id="resumenComprasBtn" class="btn secondary-btn">
             <i class="fas fa-chart-bar"></i> Compras
         </button>
+        <button id="exportarResumenBtn" class="btn primary-btn" disabled>
+            <i class="fas fa-file-export"></i> Exportar CSV
+        </button>
     </div>
     
     <div id="statusResumen" class="status-message"></div>
+
+    <div class="card admin-action" data-role="admin">
+        <h3>Anular transaccion</h3>
+        <p>Solo anula operaciones incorrectas y revierte el stock automaticamente.</p>
+        <form id="anularForm" class="button-group">
+            <select id="anularTipo" required>
+                <option value="venta">Venta</option>
+                <option value="compra">Compra</option>
+            </select>
+            <input type="text" id="anularId" placeholder="ID de la transaccion" required>
+            <button type="submit" class="btn danger-btn">Anular</button>
+        </form>
+        <div id="statusAnular" class="status-message"></div>
+    </div>
     
     <!-- Contenedor responsive para la tabla de resumen -->
     <div class="data-table-container">
@@ -425,6 +442,7 @@
 </button>
 
     <script src="api.js"></script>
+    <script src="reportes.js"></script>
     <script src="script.js"></script>
 
     

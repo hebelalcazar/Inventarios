@@ -15,8 +15,8 @@ const HOJA_AUDITORIA = "Auditoria";
 // Encabezados
 const CATEGORIAS_HEADERS = ["id", "nombre"];
 const PRODUCTOS_HEADERS = ["id", "nombre", "código", "categoría", "precio_compra", "precio_venta", "stock", "fecha_creado"];
-const COMPRAS_HEADERS = ["id", "producto_id", "cantidad", "precio_compra", "fecha", "proveedor", "metodo_pago", "talla"];
-const VENTAS_HEADERS = ["id", "producto_id", "cantidad", "precio_venta", "fecha", "cliente", "metodo_pago", "talla"];
+const COMPRAS_HEADERS = ["id", "producto_id", "cantidad", "precio_compra", "fecha", "proveedor", "metodo_pago", "talla", "estado"];
+const VENTAS_HEADERS = ["id", "producto_id", "cantidad", "precio_venta", "fecha", "cliente", "metodo_pago", "talla", "estado"];
 const RESUMEN_HEADERS = ["fecha", "total_ventas", "total_compras", "ganancia", "productos_vendidos"];
 const USUARIOS_HEADERS = ["id", "nombre", "cedula", "fecha_nacimiento", "email", "password_hash", "rol", "activo", "fecha_creado", "fecha_actualizado"];
 const AUDITORIA_HEADERS = ["id", "fecha", "usuario_id", "usuario_email", "rol", "accion", "entidad", "entidad_id", "detalle"];
@@ -111,6 +111,10 @@ function doPost(e) {
             const auth = authenticate_(requestData.token);
             requireRole_(auth, ["admin", "vendedor"]);
             result = registrarTransaccion(requestData, auth);
+        } else if (action === "anularTransaccion") {
+            const auth = authenticate_(requestData.token);
+            requireRole_(auth, ["admin"]);
+            result = anularTransaccion(requestData, auth);
         } else if (action === "crearUsuario") {
             const auth = authenticate_(requestData.token);
             requireRole_(auth, ["admin"]);
@@ -278,6 +282,11 @@ function ensureTransactionSizeColumn_(sheet) {
     if (headers.indexOf("talla") === -1) sheet.getRange(1, headers.length + 1).setValue("talla");
 }
 
+function ensureTransactionStatusColumn_(sheet) {
+    const headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 1)).getValues()[0];
+    if (headers.indexOf("estado") === -1) sheet.getRange(1, headers.length + 1).setValue("estado");
+}
+
 function registrarTransaccion(data, auth) {
     const lock = LockService.getScriptLock();
     let locked = false;
@@ -305,6 +314,7 @@ function registrarTransaccionProtegida_(data, auth) {
     ensureProductSizeColumn_(sheetProductos);
     ensurePaymentColumn_(sheet);
     ensureTransactionSizeColumn_(sheet);
+    ensureTransactionStatusColumn_(sheet);
     if (["efectivo", "transferencia"].indexOf(String(data.metodo_pago || "").toLowerCase()) === -1) {
         return { status: "error", message: "Seleccione un metodo de pago valido." };
     }
@@ -356,7 +366,8 @@ function registrarTransaccionProtegida_(data, auth) {
         new Date(),
         data.extra_data || '',
         String(data.metodo_pago).toLowerCase(),
-        String(data.talla).toUpperCase()
+        String(data.talla).toUpperCase(),
+        "ACTIVA"
     ];
 
     try {
@@ -406,6 +417,50 @@ function registrarTransaccionProtegida_(data, auth) {
 // ----------------------------------------------------------------------
 // FUNCIÓN PARA OBTENER RESUMEN DIARIO
 // ----------------------------------------------------------------------
+function anularTransaccion(data, auth) {
+    const lock = LockService.getScriptLock();
+    let locked = false;
+    try {
+        lock.waitLock(30000);
+        locked = true;
+        const isCompra = data.type === "compra";
+        if (!isCompra && data.type !== "venta") throw new Error("Tipo de transaccion no valido.");
+        const sheet = getSpreadsheet().getSheetByName(isCompra ? HOJA_COMPRAS : HOJA_VENTAS);
+        const products = getSpreadsheet().getSheetByName(HOJA_PRODUCTOS);
+        if (!sheet || !products) throw new Error("No se encontraron las hojas necesarias.");
+        ensureProductSizeColumn_(products);
+        ensureTransactionStatusColumn_(sheet);
+        const values = sheet.getDataRange().getValues();
+        const headers = values[0];
+        const idIndex = headers.indexOf("id");
+        const statusIndex = headers.indexOf("estado");
+        const productIndex = headers.indexOf("producto_id");
+        const quantityIndex = headers.indexOf("cantidad");
+        let transactionRow = -1;
+        for (let i = 1; i < values.length; i++) {
+            if (String(values[i][idIndex] || "") === String(data.id || "")) {
+                transactionRow = i;
+                break;
+            }
+        }
+        if (transactionRow === -1) throw new Error("Transaccion no encontrada.");
+        if (String(values[transactionRow][statusIndex] || "ACTIVA").toUpperCase() === "ANULADA") throw new Error("La transaccion ya fue anulada.");
+        const productId = values[transactionRow][productIndex];
+        const quantity = parseInt(values[transactionRow][quantityIndex], 10);
+        const product = findProductRow(products, productId);
+        if (product.rowIndex === -1) throw new Error("El producto asociado ya no existe.");
+        const currentStock = Number(product.rowData[6]) || 0;
+        const newStock = isCompra ? currentStock - quantity : currentStock + quantity;
+        if (newStock < 0) throw new Error("No se puede anular la compra porque el stock ya fue utilizado.");
+        products.getRange(product.rowIndex + 1, 7).setValue(newStock);
+        sheet.getRange(transactionRow + 1, statusIndex + 1).setValue("ANULADA");
+        registrarAuditoria_(auth, "ANULAR_TRANSACCION", isCompra ? HOJA_COMPRAS : HOJA_VENTAS, data.id, { producto_id: productId, cantidad: quantity, stock_resultante: newStock });
+        return { status: "success", message: "Transaccion anulada y stock revertido correctamente." };
+    } finally {
+        if (locked) lock.releaseLock();
+    }
+}
+
 function getResumenDiario() {
     return getData(HOJA_RESUMEN);
 }

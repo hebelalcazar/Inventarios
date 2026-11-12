@@ -142,6 +142,7 @@
      
      let productDataCache = {};
         let inventarioCache = [];
+        let currentSummaryType = '';
         let resumenFinancieroChart, tendenciasChart;
 
         document.addEventListener('DOMContentLoaded', () => {
@@ -291,6 +292,8 @@
             // Resúmenes
             document.getElementById('resumenVentasBtn').addEventListener('click', () => loadSummary('Ventas'));
             document.getElementById('resumenComprasBtn').addEventListener('click', () => loadSummary('Compras'));
+            document.getElementById('exportarResumenBtn').addEventListener('click', exportCurrentSummary);
+            document.getElementById('anularForm').addEventListener('submit', handleCancellation);
 
             // Dashboard
             document.getElementById('cargarInventarioBtn').addEventListener('click', loadInventario);
@@ -767,6 +770,8 @@
         }
 
         async function loadSummary(type) {
+            currentSummaryType = type;
+            document.getElementById('exportarResumenBtn').disabled = false;
             const sheetName = type === 'Ventas' ? 'VENTAS' : 'COMPRAS';
             displayStatus('statusResumen', 'info', `Cargando resumen de ${sheetName}...`);
             const table = document.getElementById('resumenTable');
@@ -806,6 +811,33 @@
             }
         }
         
+        function exportCurrentSummary() {
+            if (!currentSummaryType) return displayStatus('statusResumen', 'warning', 'Primero selecciona Ventas o Compras.');
+            const exported = InventoryReports.exportTableToCsv('resumenTable', `${currentSummaryType.toLowerCase()}-reporte.csv`);
+            if (exported) displayStatus('statusResumen', 'success', 'Reporte exportado correctamente.');
+        }
+
+        async function handleCancellation(event) {
+            event.preventDefault();
+            if (!confirm('Esta accion revertira el stock y marcara la transaccion como ANULADA. ¿Deseas continuar?')) return;
+            const payload = {
+                action: 'anularTransaccion',
+                type: document.getElementById('anularTipo').value,
+                id: document.getElementById('anularId').value.trim()
+            };
+            try {
+                const data = await (await fetch(SCRIPT_URL, { method: 'POST', body: JSON.stringify(payload), headers: { 'Content-Type': 'text/plain;charset=utf-8' } })).json();
+                displayStatus('statusAnular', data.status === 'success' ? 'success' : 'error', data.message);
+                if (data.status === 'success') {
+                    document.getElementById('anularForm').reset();
+                    document.getElementById('cargarInventarioBtn').click();
+                    if (currentSummaryType) loadSummary(currentSummaryType);
+                }
+            } catch (error) {
+                displayStatus('statusAnular', 'error', error.message || 'No se pudo anular la transaccion.');
+            }
+        }
+
         async function handleConfigAction(action) {
             const statusConfig = document.getElementById('statusConfig');
             setButtonState(true);
