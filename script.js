@@ -1,6 +1,6 @@
      const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxGdrvl2vQxHb-Z6FaNnQ7ad8j4CxkUrKnfPiCyWaRzlERsctPAB4o9j-2embW1Xiwj/exec';
-     let authToken = localStorage.getItem('inventario_auth_token') || '';
-     let currentUser = JSON.parse(localStorage.getItem('inventario_user') || 'null');
+     let authToken = InventoryAuth.getToken();
+     let currentUser = InventoryAuth.getUser();
      let appInitialized = false;
 
      // Agrega el token de sesion a las llamadas existentes sin duplicar logica HTTP.
@@ -148,6 +148,7 @@
         let currentSummaryType = '';
         let resumenFinancieroChart, tendenciasChart;
         let dashboardRawData = { ventas: [], compras: [] };
+        let dashboardReportSeries = [];
 
         document.addEventListener('DOMContentLoaded', () => {
             setupAuth();
@@ -159,7 +160,7 @@
                 fetch(`${SCRIPT_URL}?action=perfil`).then(response => response.json()).then(data => {
                     if (data.status === 'success') {
                         currentUser = data.data;
-                        localStorage.setItem('inventario_user', JSON.stringify(currentUser));
+                        InventoryAuth.saveSession(authToken, currentUser);
                         showApp();
                     } else {
                         clearSession();
@@ -172,13 +173,11 @@
             event.preventDefault();
             displayStatus('loginStatus', 'info', 'Validando credenciales...');
             try {
-                const response = await nativeFetch(SCRIPT_URL, { method: 'POST', body: JSON.stringify({ action: 'login', email: document.getElementById('loginEmail').value, password: document.getElementById('loginPassword').value }), headers: { 'Content-Type': 'text/plain;charset=utf-8' } });
-                const data = await response.json();
+                const data = await InventoryAuth.login(SCRIPT_URL, document.getElementById('loginEmail').value, document.getElementById('loginPassword').value);
                 if (data.status !== 'success') throw new Error(data.message);
                 authToken = data.token;
                 currentUser = data.user;
-                localStorage.setItem('inventario_auth_token', authToken);
-                localStorage.setItem('inventario_user', JSON.stringify(currentUser));
+                InventoryAuth.saveSession(authToken, currentUser);
                 showApp();
             } catch (error) {
                 displayStatus('loginStatus', 'error', error.message || 'No se pudo iniciar sesion.');
@@ -209,8 +208,7 @@
         function clearSession() {
             authToken = '';
             currentUser = null;
-            localStorage.removeItem('inventario_auth_token');
-            localStorage.removeItem('inventario_user');
+            InventoryAuth.clearSession();
         }
         
         function setupNavigation() {
@@ -259,6 +257,32 @@
         }
 
         function populateCategories(categories) {
+            {
+                const select = document.getElementById('p_categoria');
+                const list = document.getElementById('listaCategorias');
+                select.replaceChildren();
+                list.replaceChildren();
+                if (!categories.length) {
+                    const empty = new Option('No hay categorias registradas', '', true, true);
+                    empty.disabled = true;
+                    select.add(empty);
+                    const item = document.createElement('li');
+                    item.textContent = 'No hay categorias.';
+                    list.append(item);
+                    return;
+                }
+                const placeholder = new Option('Seleccione una categoria', '', true, true);
+                placeholder.disabled = true;
+                select.add(placeholder);
+                categories.forEach(function (category) {
+                    const name = String(category.nombre || `(ID ${category.id})`);
+                    select.add(new Option(name, name));
+                    const item = document.createElement('li');
+                    item.textContent = `ID: ${category.id} | Nombre: ${name}`;
+                    list.append(item);
+                });
+                return;
+            }
             const selectProducto = document.getElementById('p_categoria');
             selectProducto.innerHTML = '';
             
@@ -340,16 +364,16 @@
         }
 
         async function loadDashboardTransactions() {
-            const [ventasResponse, comprasResponse] = await Promise.all([
-                fetch(`${SCRIPT_URL}?action=getData&sheetName=VENTAS`),
-                fetch(`${SCRIPT_URL}?action=getData&sheetName=COMPRAS`)
-            ]);
-            const ventasData = await ventasResponse.json();
-            const comprasData = await comprasResponse.json();
+            const filters = getDashboardFilters();
+            const query = new URLSearchParams({ action: 'getReportePeriodo', tipo: 'dashboard', periodo: filters.period, fecha: filters.date });
+            const response = await fetch(`${SCRIPT_URL}?${query.toString()}`);
+            const reportData = await response.json();
+            if (reportData.status !== 'success') throw new Error(reportData.message || 'No se pudo cargar el reporte.');
             dashboardRawData = {
-                ventas: ventasData.status === 'success' ? (ventasData.data || []) : [],
-                compras: comprasData.status === 'success' ? (comprasData.data || []) : []
+                ventas: reportData.ventas || [],
+                compras: reportData.compras || []
             };
+            dashboardReportSeries = reportData.resumen || [];
             return dashboardRawData;
         }
         
@@ -461,7 +485,7 @@
         async function renderChartsFromRawData() {
             try {
                 const filters = getDashboardFilters();
-                const resumen = InventoryReports.aggregateByPeriod(dashboardRawData.ventas, dashboardRawData.compras, filters.period, filters.date);
+                const resumen = dashboardReportSeries.length ? dashboardReportSeries : InventoryReports.aggregateByPeriod(dashboardRawData.ventas, dashboardRawData.compras, filters.period, filters.date);
                 renderCharts(resumen);
             } catch (error) {
                 console.error('Error al procesar datos para graficos:', error);
@@ -653,6 +677,15 @@
             });
             data.action = action;
 
+            if (action === 'agregarProducto') {
+                const validationMessage = InventoryValidation.validateProduct(data);
+                if (validationMessage) {
+                    displayStatus(statusDivId, 'error', validationMessage);
+                    submitBtn.disabled = false;
+                    return;
+                }
+            }
+
             try {
                 const response = await fetch(SCRIPT_URL, {
                     method: 'POST',
@@ -711,6 +744,32 @@
         }
 
         function updateProductDetails(product, detailDiv, prefix) {
+            {
+                detailDiv.classList.remove('hidden');
+                const isPurchase = prefix === 'co';
+                const priceValue = isPurchase ? product.precio_compra : product.precio_venta;
+                const codeKey = Object.keys(product).find(key => key.toLowerCase().includes('digo'));
+                const categoryKey = Object.keys(product).find(key => key.toLowerCase().includes('categor'));
+                const addLine = function (label, value) {
+                    const line = document.createElement('p');
+                    const strong = document.createElement('b');
+                    strong.textContent = `${label}: `;
+                    line.append(strong, document.createTextNode(String(value ?? '')));
+                    return line;
+                };
+                detailDiv.replaceChildren();
+                detailDiv.append(addLine('ID', product.id), addLine('Producto', `${product.nombre || ''} (Cod: ${codeKey ? product[codeKey] : ''})`), addLine('Categoria', categoryKey ? product[categoryKey] : ''), addLine('Talla', product.talla || 'N/A'), addLine('Stock Actual', product.stock), addLine(isPurchase ? 'Precio Compra Actual' : 'Precio Venta Actual', `$${Number(priceValue) || 0}`));
+                document.getElementById(`${prefix}_precio_${isPurchase ? 'compra' : 'venta'}`).value = Number(priceValue || 0).toFixed(2);
+                document.getElementById(`${prefix}_talla`).value = product.talla || 'N/A';
+                if (!isPurchase && Number(product.stock) < 5) {
+                    const warning = document.createElement('p');
+                    warning.className = 'status-message warning';
+                    warning.style.cssText = 'display:block; margin-top:10px;';
+                    warning.textContent = `Stock bajo. Solo quedan ${product.stock} unidades.`;
+                    detailDiv.append(warning);
+                }
+                return;
+            }
             detailDiv.classList.remove('hidden');
             
             const isCompra = prefix === 'co';
@@ -762,7 +821,15 @@
                 extra_data: document.getElementById(`${prefix}_${type === 'compra' ? 'proveedor' : 'cliente'}`).value,
                 metodo_pago: document.getElementById(`${prefix}_metodo_pago`).value,
                 talla: document.getElementById(`${prefix}_talla`).value,
+                request_id: window.crypto && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
             };
+
+            const validationMessage = InventoryValidation.validateTransaction(transaccionData);
+            if (validationMessage) {
+                displayStatus(statusDivId, 'error', validationMessage);
+                submitBtn.disabled = false;
+                return;
+            }
 
             try {
                 const response = await fetch(SCRIPT_URL, {
@@ -797,6 +864,7 @@
 
                 if (data.status === 'success' && data.data && data.data.length > 0) {
                     displayStatus('statusInventario', 'success', `Inventario cargado: ${data.data.length} productos.`);
+                    /* Legacy table rendering removed; InventoryModule handles the table.
                     if (false) tableBody.innerHTML = data.data.map(p => {
                         const stockStyle = p.stock < 5 ? 'style="color: var(--danger-color); font-weight: bold;"' : '';
                         return `
@@ -811,6 +879,7 @@
                             </tr>
                         `;
                     }).join('');
+                    */
                     inventarioCache = data.data;
                     inventarioPagina = 1;
                     renderInventoryTable(inventarioCache);
@@ -893,9 +962,10 @@
             table.classList.add('hidden');
             tableBody.textContent = '';
             try {
-                const response = await fetch(`${SCRIPT_URL}?action=getData&sheetName=${sheetName}`);
+                const query = new URLSearchParams({ action: 'getReportePeriodo', tipo: type.toLowerCase(), periodo: period, fecha: referenceDate });
+                const response = await fetch(`${SCRIPT_URL}?${query.toString()}`);
                 const data = await response.json();
-                const rows = data.status === 'success' ? InventoryReports.filterTransactions(data.data || [], period, referenceDate) : [];
+                const rows = data.status === 'success' ? (data.data || []) : [];
                 if (data.status === 'success' && rows.length > 0) {
                     displayStatus('statusResumen', 'success', `${rows.length} ${sheetName.toLowerCase()} encontradas para el periodo seleccionado.`);
                     table.classList.remove('hidden');
@@ -913,6 +983,7 @@
             }
             return;
 
+            /* Legacy summary rendering retained only for reference during migration.
             if (false) {
             currentSummaryType = type;
             document.getElementById('exportarResumenBtn').disabled = false;
@@ -957,6 +1028,8 @@
             }
         }
         
+            */
+        }
         function exportCurrentSummary() {
             if (!currentSummaryType) return displayStatus('statusResumen', 'warning', 'Primero selecciona Ventas o Compras.');
             const period = document.getElementById('resumenPeriodo').value;
@@ -1030,7 +1103,28 @@
             const response = await fetch(`${SCRIPT_URL}?action=usuarios`);
             const data = await response.json();
             if (data.status !== 'success') return displayStatus('statusUsuarios', 'error', data.message);
-            document.getElementById('usuariosTableBody').innerHTML = data.data.map(user => `<tr><td>${user.nombre}</td><td>${user.cedula}</td><td>${user.email}</td><td>${user.rol}</td><td>${user.activo ? 'Activo' : 'Inactivo'}</td><td><button class="btn secondary-btn btn-small" onclick="editUser('${user.id}')">Editar</button> <button class="btn danger-btn btn-small" onclick="removeUser('${user.id}')">Eliminar</button></td></tr>`).join('');
+            const tableBody = document.getElementById('usuariosTableBody');
+            tableBody.replaceChildren();
+            data.data.forEach(function (user) {
+                const row = document.createElement('tr');
+                [user.nombre, user.cedula, user.email, user.rol, user.activo ? 'Activo' : 'Inactivo'].forEach(function (value) {
+                    const cell = document.createElement('td');
+                    cell.textContent = value || '';
+                    row.append(cell);
+                });
+                const actions = document.createElement('td');
+                const editButton = document.createElement('button');
+                editButton.className = 'btn secondary-btn btn-small';
+                editButton.textContent = 'Editar';
+                editButton.addEventListener('click', function () { window.editUser(user.id); });
+                const deleteButton = document.createElement('button');
+                deleteButton.className = 'btn danger-btn btn-small';
+                deleteButton.textContent = 'Eliminar';
+                deleteButton.addEventListener('click', function () { window.removeUser(user.id); });
+                actions.append(editButton, document.createTextNode(' '), deleteButton);
+                row.append(actions);
+                tableBody.append(row);
+            });
         }
 
         async function saveUser(event) {

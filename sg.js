@@ -15,10 +15,10 @@ const HOJA_AUDITORIA = "Auditoria";
 // Encabezados
 const CATEGORIAS_HEADERS = ["id", "nombre"];
 const PRODUCTOS_HEADERS = ["id", "nombre", "código", "categoría", "precio_compra", "precio_venta", "stock", "fecha_creado"];
-const COMPRAS_HEADERS = ["id", "producto_id", "cantidad", "precio_compra", "fecha", "proveedor", "metodo_pago", "talla", "estado"];
-const VENTAS_HEADERS = ["id", "producto_id", "cantidad", "precio_venta", "fecha", "cliente", "metodo_pago", "talla", "estado"];
+const COMPRAS_HEADERS = ["id", "producto_id", "cantidad", "precio_compra", "fecha", "proveedor", "metodo_pago", "talla", "estado", "stock_anterior", "stock_posterior", "precio_anterior", "precio_posterior", "request_id"];
+const VENTAS_HEADERS = ["id", "producto_id", "cantidad", "precio_venta", "fecha", "cliente", "metodo_pago", "talla", "estado", "stock_anterior", "stock_posterior", "precio_anterior", "precio_posterior", "request_id"];
 const RESUMEN_HEADERS = ["fecha", "total_ventas", "total_compras", "ganancia", "productos_vendidos"];
-const USUARIOS_HEADERS = ["id", "nombre", "cedula", "fecha_nacimiento", "email", "password_hash", "rol", "activo", "fecha_creado", "fecha_actualizado"];
+const USUARIOS_HEADERS = ["id", "nombre", "cedula", "fecha_nacimiento", "email", "password_hash", "rol", "activo", "fecha_creado", "fecha_actualizado", "password_salt", "session_version"];
 const AUDITORIA_HEADERS = ["id", "fecha", "usuario_id", "usuario_email", "rol", "accion", "entidad", "entidad_id", "detalle"];
 
 // --- FUNCIÓN CENTRAL PARA ACCEDER A LA HOJA ---
@@ -58,6 +58,9 @@ function doGet(e) {
         } else if (action === "getResumenDiario") {
             requireRole_(auth, ["admin", "vendedor"]);
             result = getResumenDiario();
+        } else if (action === "getReportePeriodo") {
+            requireRole_(auth, ["admin", "vendedor"]);
+            result = getReportePeriodo_(e.parameter.tipo, e.parameter.periodo, e.parameter.fecha);
         } else if (action === "getData" && sheetName) {
             requireRole_(auth, ["admin", "vendedor"]);
             if ([HOJA_VENTAS.toUpperCase(), HOJA_COMPRAS.toUpperCase()].indexOf(String(sheetName).toUpperCase()) === -1) throw new Error("Hoja no permitida.");
@@ -304,6 +307,45 @@ function ensureTransactionStatusColumn_(sheet) {
     if (headers.indexOf("estado") === -1) sheet.getRange(1, headers.length + 1).setValue("estado");
 }
 
+function ensureTransactionIntegrityColumns_(sheet) {
+    const required = ["stock_anterior", "stock_posterior", "precio_anterior", "precio_posterior", "request_id"];
+    let headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 1)).getValues()[0];
+    required.forEach(function (header) {
+        if (headers.indexOf(header) === -1) {
+            sheet.getRange(1, headers.length + 1).setValue(header);
+            headers.push(header);
+        }
+    });
+    return headers;
+}
+
+function getHeaderMap_(sheet) {
+    const headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 1)).getValues()[0];
+    const map = {};
+    headers.forEach(function (header, index) {
+        if (header !== "" && header !== null && header !== undefined) map[String(header)] = index;
+    });
+    return map;
+}
+
+function findTransactionByRequestId_(requestId) {
+    const normalized = String(requestId || "").trim();
+    if (!normalized) return null;
+    const ss = getSpreadsheet();
+    for (const sheetName of [HOJA_COMPRAS, HOJA_VENTAS]) {
+        const sheet = ss.getSheetByName(sheetName);
+        if (!sheet || sheet.getLastRow() < 2) continue;
+        const values = sheet.getDataRange().getValues();
+        const headers = values[0];
+        const requestIndex = headers.indexOf("request_id");
+        if (requestIndex === -1) continue;
+        for (let i = 1; i < values.length; i++) {
+            if (String(values[i][requestIndex] || "").trim() === normalized) return { sheet: sheetName, row: i + 1, id: values[i][headers.indexOf("id")] };
+        }
+    }
+    return null;
+}
+
 function registrarTransaccion(data, auth) {
     const lock = LockService.getScriptLock();
     let locked = false;
@@ -333,6 +375,10 @@ function registrarTransaccionProtegida_(data, auth) {
     ensurePaymentColumn_(sheet);
     ensureTransactionSizeColumn_(sheet);
     ensureTransactionStatusColumn_(sheet);
+    ensureTransactionIntegrityColumns_(sheet);
+    const requestId = String(data.request_id || generateUniqueAppId()).trim();
+    if (requestId.length > 120) return { status: "error", message: "El identificador de solicitud no es valido." };
+    if (findTransactionByRequestId_(requestId)) return { status: "warning", message: "Esta transaccion ya fue procesada." };
     if (["efectivo", "transferencia"].indexOf(String(data.metodo_pago || "").toLowerCase()) === -1) {
         return { status: "error", message: "Seleccione un metodo de pago valido." };
     }
@@ -341,7 +387,7 @@ function registrarTransaccionProtegida_(data, auth) {
     const { rowData, rowIndex } = findProductRow(sheetProductos, data.producto_id);
     
     if (rowIndex !== -1) {
-        const tallaProducto = String(rowData[8] || "N/A").toUpperCase();
+        const tallaProducto = String(rowData[tallaColIndex] || "N/A").toUpperCase();
         if (String(data.talla || "").toUpperCase() !== tallaProducto) {
             return { status: "error", message: `La talla seleccionada no coincide con la talla del producto (${tallaProducto}).` };
         }
@@ -351,9 +397,14 @@ function registrarTransaccionProtegida_(data, auth) {
     }
     
     // 2. Obtener datos actuales del producto
-    const stockColIndex = 6;
-    const precioCompraColIndex = 4;
-    const precioVentaColIndex = 5;
+    const productColumns = getHeaderMap_(sheetProductos);
+    const stockColIndex = productColumns.stock;
+    const precioCompraColIndex = productColumns.precio_compra;
+    const precioVentaColIndex = productColumns.precio_venta;
+    const tallaColIndex = productColumns.talla;
+    if ([stockColIndex, precioCompraColIndex, precioVentaColIndex, tallaColIndex].some(function (index) { return index === undefined; })) {
+        return { status: "error", message: "La estructura de la hoja Productos no contiene todas las columnas necesarias." };
+    }
     
     const cantidad = Number(data.cantidad);
     const precioTransaccion = Number(data.precio);
@@ -361,6 +412,7 @@ function registrarTransaccionProtegida_(data, auth) {
     if (!Number.isFinite(precioTransaccion) || precioTransaccion < 0) return { status: "error", message: "El precio debe ser un numero valido mayor o igual a cero." };
     
     let stockActual = parseFloat(rowData[stockColIndex]) || 0;
+    const precioActual = isCompra ? (parseFloat(rowData[precioCompraColIndex]) || 0) : (parseFloat(rowData[precioVentaColIndex]) || 0);
     let nuevoStock;
 
     // 3. Validar stock para ventas
@@ -387,7 +439,12 @@ function registrarTransaccionProtegida_(data, auth) {
         data.extra_data || '',
         String(data.metodo_pago).toLowerCase(),
         String(data.talla).toUpperCase(),
-        "ACTIVA"
+        "ACTIVA",
+        stockActual,
+        nuevoStock,
+        precioActual,
+        precioTransaccion,
+        requestId
     ];
 
     try {
@@ -419,7 +476,11 @@ function registrarTransaccionProtegida_(data, auth) {
             precio: precioTransaccion,
             metodo_pago: data.metodo_pago,
             talla: data.talla,
-            stock_resultante: nuevoStock
+            stock_anterior: stockActual,
+            stock_resultante: nuevoStock,
+            precio_anterior: precioActual,
+            precio_posterior: precioTransaccion,
+            request_id: requestId
         });
 
         return { 
@@ -450,12 +511,15 @@ function anularTransaccion(data, auth) {
         if (!sheet || !products) throw new Error("No se encontraron las hojas necesarias.");
         ensureProductSizeColumn_(products);
         ensureTransactionStatusColumn_(sheet);
+        ensureTransactionIntegrityColumns_(sheet);
         const values = sheet.getDataRange().getValues();
         const headers = values[0];
         const idIndex = headers.indexOf("id");
         const statusIndex = headers.indexOf("estado");
         const productIndex = headers.indexOf("producto_id");
         const quantityIndex = headers.indexOf("cantidad");
+        const priceBeforeIndex = headers.indexOf("precio_anterior");
+        const priceAfterIndex = headers.indexOf("precio_posterior");
         let transactionRow = -1;
         for (let i = 1; i < values.length; i++) {
             if (String(values[i][idIndex] || "") === String(data.id || "")) {
@@ -469,12 +533,27 @@ function anularTransaccion(data, auth) {
         const quantity = parseInt(values[transactionRow][quantityIndex], 10);
         const product = findProductRow(products, productId);
         if (product.rowIndex === -1) throw new Error("El producto asociado ya no existe.");
-        const currentStock = Number(product.rowData[6]) || 0;
+        const productColumns = getHeaderMap_(products);
+        const stockColumn = productColumns.stock;
+        const purchasePriceColumn = productColumns.precio_compra;
+        const salePriceColumn = productColumns.precio_venta;
+        if ([stockColumn, purchasePriceColumn, salePriceColumn].some(function (index) { return index === undefined; })) throw new Error("La estructura de la hoja Productos no es valida.");
+        const currentStock = Number(product.rowData[stockColumn]) || 0;
         const newStock = isCompra ? currentStock - quantity : currentStock + quantity;
         if (newStock < 0) throw new Error("No se puede anular la compra porque el stock ya fue utilizado.");
-        products.getRange(product.rowIndex + 1, 7).setValue(newStock);
+        products.getRange(product.rowIndex + 1, stockColumn + 1).setValue(newStock);
+        const priceBeforeRaw = values[transactionRow][priceBeforeIndex];
+        const priceAfterRaw = values[transactionRow][priceAfterIndex];
+        const transactionPriceBefore = Number(priceBeforeRaw);
+        const transactionPriceAfter = Number(priceAfterRaw);
+        const hasPriceHistory = priceBeforeRaw !== "" && priceBeforeRaw !== null && priceAfterRaw !== "" && priceAfterRaw !== null;
+        const productPriceColumn = isCompra ? purchasePriceColumn : salePriceColumn;
+        const currentProductPrice = Number(product.rowData[productPriceColumn]) || 0;
+        if (hasPriceHistory && Number.isFinite(transactionPriceBefore) && Number.isFinite(transactionPriceAfter) && currentProductPrice === transactionPriceAfter) {
+            products.getRange(product.rowIndex + 1, productPriceColumn + 1).setValue(transactionPriceBefore);
+        }
         sheet.getRange(transactionRow + 1, statusIndex + 1).setValue("ANULADA");
-        registrarAuditoria_(auth, "ANULAR_TRANSACCION", isCompra ? HOJA_COMPRAS : HOJA_VENTAS, data.id, { producto_id: productId, cantidad: quantity, stock_resultante: newStock });
+        registrarAuditoria_(auth, "ANULAR_TRANSACCION", isCompra ? HOJA_COMPRAS : HOJA_VENTAS, data.id, { producto_id: productId, cantidad: quantity, stock_resultante: newStock, precio_restaurado: hasPriceHistory && Number.isFinite(transactionPriceBefore) && currentProductPrice === transactionPriceAfter });
         return { status: "success", message: "Transaccion anulada y stock revertido correctamente." };
     } finally {
         if (locked) lock.releaseLock();
@@ -483,6 +562,92 @@ function anularTransaccion(data, auth) {
 
 function getResumenDiario() {
     return getData(HOJA_RESUMEN);
+}
+
+function parseReportDate_(value) {
+    if (value instanceof Date && !isNaN(value.getTime())) return new Date(value.getTime());
+    const text = String(value || "").trim();
+    const match = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (match) return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+    const parsed = new Date(text);
+    return isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function getReportRange_(period, referenceValue) {
+    const normalizedPeriod = String(period || "dia").toLowerCase();
+    if (["dia", "semana", "mes", "año", "ano"].indexOf(normalizedPeriod) === -1) throw new Error("Periodo de reporte no valido.");
+    const reference = parseReportDate_(referenceValue) || new Date();
+    let start = new Date(reference.getFullYear(), reference.getMonth(), reference.getDate());
+    let end = new Date(start.getTime());
+    if (normalizedPeriod === "semana") {
+        const day = start.getDay() || 7;
+        start.setDate(start.getDate() - day + 1);
+        end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6);
+    } else if (normalizedPeriod === "mes") {
+        start = new Date(reference.getFullYear(), reference.getMonth(), 1);
+        end = new Date(reference.getFullYear(), reference.getMonth() + 1, 0);
+    } else if (normalizedPeriod === "año" || normalizedPeriod === "ano") {
+        start = new Date(reference.getFullYear(), 0, 1);
+        end = new Date(reference.getFullYear(), 11, 31);
+    }
+    end.setHours(23, 59, 59, 999);
+    return { start: start, end: end, period: normalizedPeriod === "ano" ? "año" : normalizedPeriod };
+}
+
+function getReportRows_(sheetName, range) {
+    const result = getData(sheetName);
+    if (result.status !== "success") return [];
+    return result.data.filter(function (row) {
+        if (String(row.estado || "ACTIVA").toUpperCase() === "ANULADA") return false;
+        const date = parseReportDate_(row.fecha);
+        return date && date >= range.start && date <= range.end;
+    });
+}
+
+function reportAmount_(row, type) {
+    const quantity = Number(row.cantidad) || 0;
+    const price = Number(type === "venta" ? row.precio_venta : row.precio_compra) || 0;
+    return quantity * price;
+}
+
+function aggregateReportRows_(ventas, compras, range) {
+    const buckets = {};
+    const addRows = function (rows, type) {
+        rows.forEach(function (row) {
+            const date = parseReportDate_(row.fecha);
+            if (!date) return;
+            const key = range.period === "año"
+                ? date.getFullYear() + "-" + String(date.getMonth() + 1).padStart(2, "0")
+                : date.getFullYear() + "-" + String(date.getMonth() + 1).padStart(2, "0") + "-" + String(date.getDate()).padStart(2, "0");
+            if (!buckets[key]) buckets[key] = { fecha: key, total_ventas: 0, total_compras: 0, ganancia: 0 };
+            if (type === "venta") buckets[key].total_ventas += reportAmount_(row, type);
+            else buckets[key].total_compras += reportAmount_(row, type);
+            buckets[key].ganancia = buckets[key].total_ventas - buckets[key].total_compras;
+        });
+    };
+    addRows(ventas, "venta");
+    addRows(compras, "compra");
+    return Object.keys(buckets).sort().map(function (key) { return buckets[key]; });
+}
+
+function getReportePeriodo_(tipo, periodo, fecha) {
+    const normalizedType = String(tipo || "dashboard").toLowerCase();
+    if (["dashboard", "ventas", "compras"].indexOf(normalizedType) === -1) throw new Error("Tipo de reporte no valido.");
+    const range = getReportRange_(periodo, fecha);
+    const ventas = getReportRows_(HOJA_VENTAS, range);
+    const compras = getReportRows_(HOJA_COMPRAS, range);
+    const response = {
+        status: "success",
+        tipo: normalizedType,
+        periodo: range.period,
+        fecha_inicio: range.start,
+        fecha_fin: range.end,
+        data: normalizedType === "ventas" ? ventas : normalizedType === "compras" ? compras : [],
+        ventas: ventas,
+        compras: compras,
+        resumen: aggregateReportRows_(ventas, compras, range)
+    };
+    return response;
 }
 
 // ----------------------------------------------------------------------
@@ -631,8 +796,21 @@ function authError_(message) {
     return error;
 }
 
-function hashPassword_(password) {
-    const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(password), Utilities.Charset.UTF_8);
+function generatePasswordSalt_() {
+    return Utilities.getUuid().replace(/-/g, "");
+}
+
+function hashPassword_(password, salt) {
+    const input = String(salt || "") + ":" + String(password || "");
+    const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, input, Utilities.Charset.UTF_8);
+    return bytes.map(function(byte) {
+        const value = byte < 0 ? byte + 256 : byte;
+        return (value < 16 ? "0" : "") + value.toString(16);
+    }).join("");
+}
+
+function hashLegacyPassword_(password) {
+    const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(password || ""), Utilities.Charset.UTF_8);
     return bytes.map(function(byte) {
         const value = byte < 0 ? byte + 256 : byte;
         return (value < 16 ? "0" : "") + value.toString(16);
@@ -646,6 +824,27 @@ function ensureUsersSheet_() {
         sheet = ss.insertSheet(HOJA_USUARIOS);
         sheet.getRange(1, 1, 1, USUARIOS_HEADERS.length).setValues([USUARIOS_HEADERS]);
         sheet.setFrozenRows(1);
+    } else {
+        let headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 1)).getValues()[0];
+        USUARIOS_HEADERS.forEach(function (header) {
+            if (headers.indexOf(header) === -1) {
+                sheet.getRange(1, headers.length + 1).setValue(header);
+                headers.push(header);
+            }
+        });
+        if (sheet.getLastRow() > 1) {
+            const saltIndex = headers.indexOf("password_salt") + 1;
+            const versionIndex = headers.indexOf("session_version") + 1;
+            const rows = sheet.getLastRow() - 1;
+            const salts = sheet.getRange(2, saltIndex, rows, 1).getValues();
+            const versions = sheet.getRange(2, versionIndex, rows, 1).getValues();
+            let changedSalts = false;
+            let changedVersions = false;
+            salts.forEach(function (row) { if (!row[0]) { row[0] = ""; changedSalts = true; } });
+            versions.forEach(function (row) { if (!row[0]) { row[0] = 1; changedVersions = true; } });
+            if (changedSalts) sheet.getRange(2, saltIndex, rows, 1).setValues(salts);
+            if (changedVersions) sheet.getRange(2, versionIndex, rows, 1).setValues(versions);
+        }
     }
     return sheet;
 }
@@ -684,7 +883,9 @@ function rowToUser_(row) {
         rol: String(row[6] || "vendedor").toLowerCase(),
         activo: row[7] === true || String(row[7]).toLowerCase() === "true",
         fecha_creado: row[8] || "",
-        fecha_actualizado: row[9] || ""
+        fecha_actualizado: row[9] || "",
+        password_salt: String(row[10] || ""),
+        session_version: Number(row[11]) || 1
     };
 }
 
@@ -716,11 +917,24 @@ function findUser_(identifier) {
 
 function login_(data) {
     const found = findUser_(data.email);
-    if (!found || !found.user.activo || found.user.password_hash !== hashPassword_(data.password)) {
-        throw authError_("Correo o contraseña incorrectos.");
+    if (!found || !found.user.activo) {
+        throw authError_("Correo o contrasena incorrectos.");
+    }
+    const validPassword = found.user.password_salt
+        ? found.user.password_hash === hashPassword_(data.password, found.user.password_salt)
+        : found.user.password_hash === hashLegacyPassword_(data.password);
+    if (!validPassword) throw authError_("Correo o contrasena incorrectos.");
+    if (!found.user.password_salt) {
+        const salt = generatePasswordSalt_();
+        const sheet = ensureUsersSheet_();
+        sheet.getRange(found.row, 6).setValue(hashPassword_(data.password, salt));
+        sheet.getRange(found.row, 11).setValue(salt);
+        found.user.password_salt = salt;
     }
     const token = Utilities.getUuid() + Utilities.getUuid().replace(/-/g, "");
-    CacheService.getScriptCache().put(token, JSON.stringify(publicUser_(found.user)), 21600);
+    const session = publicUser_(found.user);
+    session.session_version = found.user.session_version;
+    CacheService.getScriptCache().put(token, JSON.stringify(session), 21600);
     return { status: "success", token: token, user: publicUser_(found.user) };
 }
 
@@ -728,7 +942,13 @@ function authenticate_(token) {
     if (!token) throw authError_("Sesión no iniciada o expirada.");
     const raw = CacheService.getScriptCache().get(String(token));
     if (!raw) throw authError_("Sesión no iniciada o expirada.");
-    return JSON.parse(raw);
+    const session = JSON.parse(raw);
+    const current = findUser_(session.id);
+    if (!current || !current.user.activo || current.user.session_version !== Number(session.session_version || 1)) {
+        CacheService.getScriptCache().remove(String(token));
+        throw authError_("La sesion ya no es valida. Inicia sesion nuevamente.");
+    }
+    return publicUser_(current.user);
 }
 
 function requireRole_(user, roles) {
@@ -759,7 +979,8 @@ function createUser_(data, auth) {
     validateUserData_(data, true);
     if (findUser_(data.email) || findUser_(data.cedula)) throw new Error("Ya existe un usuario con ese correo o cédula.");
     const now = new Date();
-    ensureUsersSheet_().appendRow([generateUniqueAppId(), data.nombre.trim(), String(data.cedula).trim(), data.fecha_nacimiento || "", data.email.trim().toLowerCase(), hashPassword_(data.password), String(data.rol || "vendedor").toLowerCase(), data.activo !== false, now, now]);
+    const salt = generatePasswordSalt_();
+    ensureUsersSheet_().appendRow([generateUniqueAppId(), data.nombre.trim(), String(data.cedula).trim(), data.fecha_nacimiento || "", data.email.trim().toLowerCase(), hashPassword_(data.password, salt), String(data.rol || "vendedor").toLowerCase(), data.activo !== false, now, now, salt, 1]);
     registrarAuditoria_(auth, "CREAR_USUARIO", HOJA_USUARIOS, data.email, { rol: String(data.rol || "vendedor").toLowerCase() });
     return { status: "success", message: "Usuario creado correctamente." };
 }
@@ -782,7 +1003,10 @@ function updateUser_(data, auth) {
     const nextRole = String(data.rol || current.rol).toLowerCase();
     const nextActive = data.activo !== false;
     if (current.rol === "admin" && current.activo && (!nextActive || nextRole !== "admin") && countActiveAdmins_() <= 1) throw new Error("Debe existir al menos un administrador activo.");
-    const row = [current.id, data.nombre.trim(), String(data.cedula).trim(), data.fecha_nacimiento || "", data.email.trim().toLowerCase(), data.password ? hashPassword_(data.password) : current.password_hash, nextRole, nextActive, current.fecha_creado, new Date()];
+    const salt = data.password ? generatePasswordSalt_() : current.password_salt;
+    const passwordHash = data.password ? hashPassword_(data.password, salt) : current.password_hash;
+    const nextSessionVersion = data.password ? current.session_version + 1 : current.session_version;
+    const row = [current.id, data.nombre.trim(), String(data.cedula).trim(), data.fecha_nacimiento || "", data.email.trim().toLowerCase(), passwordHash, nextRole, nextActive, current.fecha_creado, new Date(), salt, nextSessionVersion];
     ensureUsersSheet_().getRange(found.row, 1, 1, USUARIOS_HEADERS.length).setValues([row]);
     registrarAuditoria_(auth, "ACTUALIZAR_USUARIO", HOJA_USUARIOS, found.user.id, { rol: row[6] });
     return { status: "success", message: "Usuario actualizado correctamente." };
@@ -822,8 +1046,12 @@ function updateProfile_(data, auth) {
 function changePassword_(data, auth) {
     if (!data.currentPassword || !data.newPassword || String(data.newPassword).length < 8) throw new Error("La contraseña actual y una nueva contraseña de mínimo 8 caracteres son obligatorias.");
     const found = findUser_(auth.id);
-    if (!found || found.user.password_hash !== hashPassword_(data.currentPassword)) throw authError_("La contraseña actual no es correcta.");
-    ensureUsersSheet_().getRange(found.row, 6).setValue(hashPassword_(data.newPassword));
+    const currentHash = found && found.user.password_salt ? hashPassword_(data.currentPassword, found.user.password_salt) : hashLegacyPassword_(data.currentPassword);
+    if (!found || found.user.password_hash !== currentHash) throw authError_("La contrasena actual no es correcta.");
+    const salt = generatePasswordSalt_();
+    ensureUsersSheet_().getRange(found.row, 6).setValue(hashPassword_(data.newPassword, salt));
+    ensureUsersSheet_().getRange(found.row, 11).setValue(salt);
+    ensureUsersSheet_().getRange(found.row, 12).setValue(found.user.session_version + 1);
     ensureUsersSheet_().getRange(found.row, 10).setValue(new Date());
     return { status: "success", message: "Contraseña cambiada correctamente." };
 }
