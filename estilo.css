@@ -96,6 +96,28 @@
 .pagination-controls { display: flex; align-items: center; justify-content: center; gap: var(--space-4); margin-top: var(--space-4); }
 .pagination-controls span { color: var(--gray-600); font-weight: 600; }
 
+.print-report-header {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 2px solid #0b1f3a;
+}
+
+.print-report-header img {
+  width: 82px;
+  height: 58px;
+  object-fit: contain;
+}
+
+.print-report-header h1 {
+  color: #0b1f3a;
+  font-size: 1.45rem;
+  letter-spacing: .08em;
+}
+
 @media print {
   body.printing-report * { visibility: hidden !important; }
   body.printing-report #resumenes,
@@ -105,6 +127,7 @@
   body.printing-report #resumenes .admin-action,
   body.printing-report #resumenes .status-message { display: none !important; }
   body.printing-report #resumenTable { display: table !important; }
+  body.printing-report .print-report-header { display: flex !important; }
   body.printing-dashboard > *:not(.dashboard-container) { display: none !important; }
   body.printing-dashboard .dashboard-container { display: block !important; }
   body.printing-dashboard .sidebar,
@@ -116,6 +139,7 @@
   body.printing-dashboard #calcularResumenBtn,
   body.printing-dashboard #exportarDashboardBtn,
   body.printing-dashboard #imprimirDashboardBtn { display: none !important; }
+  body.printing-dashboard .print-report-header { display: flex !important; }
 }
 
 /* ============ RESET Y BASE ============ */
