@@ -105,6 +105,17 @@
   body.printing-report #resumenes .admin-action,
   body.printing-report #resumenes .status-message { display: none !important; }
   body.printing-report #resumenTable { display: table !important; }
+  body.printing-dashboard > *:not(.dashboard-container) { display: none !important; }
+  body.printing-dashboard .dashboard-container { display: block !important; }
+  body.printing-dashboard .sidebar,
+  body.printing-dashboard .content-section:not(#dashboard),
+  body.printing-dashboard .period-filter,
+  body.printing-dashboard .button-group,
+  body.printing-dashboard #statusDashboard { display: none !important; }
+  body.printing-dashboard #cargarDatosGraficosBtn,
+  body.printing-dashboard #calcularResumenBtn,
+  body.printing-dashboard #exportarDashboardBtn,
+  body.printing-dashboard #imprimirDashboardBtn { display: none !important; }
 }
 
 /* ============ RESET Y BASE ============ */
@@ -125,6 +136,30 @@ body {
 }
 
 /* ============ LAYOUT PRINCIPAL ============ */
+.period-filter {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 1rem 0;
+  padding: 0.9rem 1rem;
+  background: var(--gray-100);
+  border-radius: var(--radius);
+}
+
+.period-filter label {
+  font-weight: 600;
+}
+
+.period-filter select,
+.period-filter input {
+  min-height: 38px;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--gray-300);
+  border-radius: var(--radius);
+  background: #fff;
+}
+
 .dashboard-container {
   display: flex;
   min-height: 100vh;

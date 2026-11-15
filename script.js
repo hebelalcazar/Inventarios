@@ -147,6 +147,7 @@
         const inventarioPorPagina = 10;
         let currentSummaryType = '';
         let resumenFinancieroChart, tendenciasChart;
+        let dashboardRawData = { ventas: [], compras: [] };
 
         document.addEventListener('DOMContentLoaded', () => {
             setupAuth();
@@ -279,6 +280,9 @@
         }
 
         function setupForms() {
+            const today = new Date().toISOString().slice(0, 10);
+            document.getElementById('dashboardFecha').value = today;
+            document.getElementById('resumenFecha').value = today;
             // Configuración
             document.getElementById('iniciarDBBtn').addEventListener('click', () => handleConfigAction('iniciar'));
             document.getElementById('resetDBBtn').addEventListener('click', () => {
@@ -301,6 +305,8 @@
             // Resúmenes
             document.getElementById('resumenVentasBtn').addEventListener('click', () => loadSummary('Ventas'));
             document.getElementById('resumenComprasBtn').addEventListener('click', () => loadSummary('Compras'));
+            document.getElementById('resumenPeriodo').addEventListener('change', () => { if (currentSummaryType) loadSummary(currentSummaryType); });
+            document.getElementById('resumenFecha').addEventListener('change', () => { if (currentSummaryType) loadSummary(currentSummaryType); });
             document.getElementById('exportarResumenBtn').addEventListener('click', exportCurrentSummary);
             document.getElementById('imprimirResumenBtn').addEventListener('click', () => InventoryReports.printSummary());
             document.getElementById('anularForm').addEventListener('submit', handleCancellation);
@@ -313,6 +319,10 @@
             document.getElementById('inventarioTallaFiltro').addEventListener('change', filterInventory);
             document.getElementById('cargarDatosGraficosBtn').addEventListener('click', handleLoadDashboard);
             document.getElementById('calcularResumenBtn').addEventListener('click', calcularResumenFinanciero);
+            document.getElementById('exportarDashboardBtn').addEventListener('click', exportCurrentDashboard);
+            document.getElementById('imprimirDashboardBtn').addEventListener('click', () => InventoryReports.printDashboard());
+            document.getElementById('dashboardPeriodo').addEventListener('change', handleLoadDashboard);
+            document.getElementById('dashboardFecha').addEventListener('change', handleLoadDashboard);
             document.getElementById('usuarioForm').addEventListener('submit', saveUser);
             document.getElementById('cancelarUsuarioBtn').addEventListener('click', resetUserForm);
             document.getElementById('perfilForm').addEventListener('submit', saveProfile);
@@ -321,6 +331,27 @@
         }
 
         // ================= DASHBOARD FUNCTIONS =================
+
+        function getDashboardFilters() {
+            return {
+                period: document.getElementById('dashboardPeriodo').value,
+                date: document.getElementById('dashboardFecha').value
+            };
+        }
+
+        async function loadDashboardTransactions() {
+            const [ventasResponse, comprasResponse] = await Promise.all([
+                fetch(`${SCRIPT_URL}?action=getData&sheetName=VENTAS`),
+                fetch(`${SCRIPT_URL}?action=getData&sheetName=COMPRAS`)
+            ]);
+            const ventasData = await ventasResponse.json();
+            const comprasData = await comprasResponse.json();
+            dashboardRawData = {
+                ventas: ventasData.status === 'success' ? (ventasData.data || []) : [],
+                compras: comprasData.status === 'success' ? (comprasData.data || []) : []
+            };
+            return dashboardRawData;
+        }
         
         async function handleLoadDashboard() {
             await calcularResumenFinanciero();
@@ -328,6 +359,27 @@
         }
 
         async function calcularResumenFinanciero() {
+            try {
+                const rawData = await loadDashboardTransactions();
+                const filters = getDashboardFilters();
+                const ventas = InventoryReports.filterTransactions(rawData.ventas, filters.period, filters.date);
+                const compras = InventoryReports.filterTransactions(rawData.compras, filters.period, filters.date);
+                const totalVentas = ventas.reduce((sum, row) => sum + InventoryReports.transactionAmount(row, 'venta'), 0);
+                const totalCompras = compras.reduce((sum, row) => sum + InventoryReports.transactionAmount(row, 'compra'), 0);
+                const ganancias = totalVentas - totalCompras;
+                document.getElementById('totalVentas').textContent = `$${totalVentas.toFixed(2)}`;
+                document.getElementById('totalCompras').textContent = `$${totalCompras.toFixed(2)}`;
+                document.getElementById('totalGanancias').textContent = `$${ganancias.toFixed(2)}`;
+                document.getElementById('totalGastos').textContent = `$${totalCompras.toFixed(2)}`;
+                const gananciasElement = document.getElementById('totalGanancias');
+                gananciasElement.style.color = ganancias > 0 ? 'var(--secondary-color)' : ganancias < 0 ? 'var(--danger-color)' : '#666';
+                displayStatus('statusDashboard', 'success', `Periodo: ${filters.period}. Ventas: $${totalVentas.toFixed(2)} | Compras: $${totalCompras.toFixed(2)} | Ganancia: $${ganancias.toFixed(2)}`);
+                return { totalVentas, totalCompras, ganancias };
+            } catch (error) {
+                displayStatus('statusDashboard', 'error', `Error al calcular resumen: ${error.message}`);
+                return { totalVentas: 0, totalCompras: 0, ganancias: 0 };
+            }
+
             displayStatus('statusDashboard', 'info', 'Calculando resumen financiero...');
             
             try {
@@ -386,6 +438,9 @@
         }
 
         async function cargarDatosGraficos() {
+            await renderChartsFromRawData();
+            return;
+
             try {
                 // Obtener datos para gráficos
                 const resumenResponse = await fetch(`${SCRIPT_URL}?action=getResumenDiario`);
@@ -404,6 +459,16 @@
         }
 
         async function renderChartsFromRawData() {
+            try {
+                const filters = getDashboardFilters();
+                const resumen = InventoryReports.aggregateByPeriod(dashboardRawData.ventas, dashboardRawData.compras, filters.period, filters.date);
+                renderCharts(resumen);
+            } catch (error) {
+                console.error('Error al procesar datos para graficos:', error);
+                displayStatus('statusDashboard', 'warning', 'No hay datos suficientes para generar graficos.');
+            }
+            return;
+
             try {
                 const [ventasResponse, comprasResponse] = await Promise.all([
                     fetch(`${SCRIPT_URL}?action=getData&sheetName=VENTAS`),
@@ -819,6 +884,40 @@
             document.getElementById('exportarResumenBtn').disabled = false;
             document.getElementById('imprimirResumenBtn').disabled = false;
             const sheetName = type === 'Ventas' ? 'VENTAS' : 'COMPRAS';
+            const period = document.getElementById('resumenPeriodo').value;
+            const referenceDate = document.getElementById('resumenFecha').value;
+            displayStatus('statusResumen', 'info', `Cargando resumen de ${sheetName}...`);
+            const table = document.getElementById('resumenTable');
+            const tableHead = table.querySelector('thead');
+            const tableBody = document.getElementById('resumenTableBody');
+            table.classList.add('hidden');
+            tableBody.textContent = '';
+            try {
+                const response = await fetch(`${SCRIPT_URL}?action=getData&sheetName=${sheetName}`);
+                const data = await response.json();
+                const rows = data.status === 'success' ? InventoryReports.filterTransactions(data.data || [], period, referenceDate) : [];
+                if (data.status === 'success' && rows.length > 0) {
+                    displayStatus('statusResumen', 'success', `${rows.length} ${sheetName.toLowerCase()} encontradas para el periodo seleccionado.`);
+                    table.classList.remove('hidden');
+                    const headers = Object.keys(rows[0]);
+                    tableHead.innerHTML = `<tr>${headers.map(header => `<th>${escapeHtml(header.toUpperCase().replace('_', ' '))}</th>`).join('')}</tr>`;
+                    tableBody.innerHTML = rows.map(row => `<tr>${headers.map(header => {
+                        const value = row[header] instanceof Date ? row[header].toLocaleDateString() : row[header];
+                        return `<td>${escapeHtml(value)}</td>`;
+                    }).join('')}</tr>`).join('');
+                } else {
+                    displayStatus('statusResumen', 'warning', 'No hay registros activos para el periodo seleccionado.');
+                }
+            } catch (error) {
+                displayStatus('statusResumen', 'error', `Error al cargar resumen: ${error.message}`);
+            }
+            return;
+
+            if (false) {
+            currentSummaryType = type;
+            document.getElementById('exportarResumenBtn').disabled = false;
+            document.getElementById('imprimirResumenBtn').disabled = false;
+            const sheetName = type === 'Ventas' ? 'VENTAS' : 'COMPRAS';
             displayStatus('statusResumen', 'info', `Cargando resumen de ${sheetName}...`);
             const table = document.getElementById('resumenTable');
             const tableHead = table.querySelector('thead');
@@ -855,12 +954,28 @@
             } catch (error) {
                 displayStatus('statusResumen', 'error', `Error al cargar resumen: ${error.message}`);
             }
+            }
         }
         
         function exportCurrentSummary() {
             if (!currentSummaryType) return displayStatus('statusResumen', 'warning', 'Primero selecciona Ventas o Compras.');
-            const exported = InventoryReports.exportTableToCsv('resumenTable', `${currentSummaryType.toLowerCase()}-reporte.csv`);
+            const period = document.getElementById('resumenPeriodo').value;
+            const date = document.getElementById('resumenFecha').value || 'actual';
+            const exported = InventoryReports.exportTableToCsv('resumenTable', `${currentSummaryType.toLowerCase()}-${period}-${date}.csv`);
             if (exported) displayStatus('statusResumen', 'success', 'Reporte exportado correctamente.');
+        }
+
+        function exportCurrentDashboard() {
+            const filters = getDashboardFilters();
+            const rows = InventoryReports.aggregateByPeriod(dashboardRawData.ventas, dashboardRawData.compras, filters.period, filters.date).map(row => ({
+                fecha: row.fecha,
+                ventas: row.total_ventas.toFixed(2),
+                compras: row.total_compras.toFixed(2),
+                ganancia: row.ganancia.toFixed(2)
+            }));
+            const date = filters.date || 'actual';
+            const exported = InventoryReports.exportRowsToCsv(rows, `dashboard-${filters.period}-${date}.csv`);
+            displayStatus('statusDashboard', exported ? 'success' : 'warning', exported ? 'Dashboard exportado correctamente.' : 'No hay datos para exportar.');
         }
 
         async function handleCancellation(event) {

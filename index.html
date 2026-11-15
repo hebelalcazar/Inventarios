@@ -87,8 +87,26 @@
                     <button id="calcularResumenBtn" class="btn secondary-btn">
                         <i class="fas fa-calculator"></i> Calcular Resumen
                     </button>
+                    <button id="exportarDashboardBtn" class="btn primary-btn">
+                        <i class="fas fa-file-export"></i> Exportar CSV
+                    </button>
+                    <button id="imprimirDashboardBtn" class="btn secondary-btn">
+                        <i class="fas fa-print"></i> Imprimir / PDF
+                    </button>
                 </div>
                 
+                <div class="period-filter" aria-label="Filtros del dashboard">
+                    <label for="dashboardPeriodo">Periodo:</label>
+                    <select id="dashboardPeriodo">
+                        <option value="dia">Día</option>
+                        <option value="semana">Semana</option>
+                        <option value="mes">Mes</option>
+                        <option value="año">Año</option>
+                    </select>
+                    <label for="dashboardFecha">Fecha de referencia:</label>
+                    <input type="date" id="dashboardFecha">
+                </div>
+
                 <div id="statusDashboard" class="status-message"></div>
 
                 <!-- Estadísticas Resumen -->
@@ -362,6 +380,18 @@
         </button>
     </div>
     
+    <div class="period-filter" aria-label="Filtros de resumen">
+        <label for="resumenPeriodo">Periodo:</label>
+        <select id="resumenPeriodo">
+            <option value="dia">Día</option>
+            <option value="semana">Semana</option>
+            <option value="mes">Mes</option>
+            <option value="año">Año</option>
+        </select>
+        <label for="resumenFecha">Fecha de referencia:</label>
+        <input type="date" id="resumenFecha">
+    </div>
+
     <div id="statusResumen" class="status-message"></div>
 
     <div class="card admin-action" data-role="admin">
