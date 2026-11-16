@@ -1,14 +1,15 @@
 (function () {
     const TOKEN_KEY = 'inventario_auth_token';
     const USER_KEY = 'inventario_user';
+    const sessionStorageApi = window.sessionStorage;
 
     function getToken() {
-        return localStorage.getItem(TOKEN_KEY) || '';
+        return sessionStorageApi.getItem(TOKEN_KEY) || '';
     }
 
     function getUser() {
         try {
-            return JSON.parse(localStorage.getItem(USER_KEY) || 'null');
+            return JSON.parse(sessionStorageApi.getItem(USER_KEY) || 'null');
         } catch (_) {
             clearSession();
             return null;
@@ -16,11 +17,13 @@
     }
 
     function saveSession(token, user) {
-        localStorage.setItem(TOKEN_KEY, token || '');
-        localStorage.setItem(USER_KEY, JSON.stringify(user || null));
+        sessionStorageApi.setItem(TOKEN_KEY, token || '');
+        sessionStorageApi.setItem(USER_KEY, JSON.stringify(user || null));
     }
 
     function clearSession() {
+        sessionStorageApi.removeItem(TOKEN_KEY);
+        sessionStorageApi.removeItem(USER_KEY);
         localStorage.removeItem(TOKEN_KEY);
         localStorage.removeItem(USER_KEY);
     }

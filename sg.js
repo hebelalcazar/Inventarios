@@ -12,6 +12,8 @@ const HOJA_RESUMEN = "resumen_diario";
 const HOJA_USUARIOS = "Usuarios";
 const HOJA_AUDITORIA = "Auditoria";
 const UMBRAL_STOCK_BAJO = 3;
+const MAX_INTENTOS_LOGIN = 5;
+const VENTANA_LOGIN_SEGUNDOS = 900;
 
 // Encabezados
 const CATEGORIAS_HEADERS = ["id", "nombre"];
@@ -76,7 +78,7 @@ function doGet(e) {
             result = { status: "error", message: `Acción GET '${action}' no válida o faltan parámetros.` };
         }
     } catch (error) {
-        result = { status: "error", message: `Error en doGet: ${error.message}` };
+        result = { status: error.code === "AUTH" ? "unauthorized" : error.code === "FORBIDDEN" ? "forbidden" : "error", message: `Error en doGet: ${error.message}` };
     }
 
     return ContentService.createTextOutput(JSON.stringify(result))
@@ -148,7 +150,7 @@ function doPost(e) {
 
     } catch (error) {
         return ContentService.createTextOutput(JSON.stringify({ 
-            status: "error", 
+            status: error.code === "AUTH" ? "unauthorized" : error.code === "FORBIDDEN" ? "forbidden" : "error", 
             message: `Error al procesar la solicitud POST: ${error.message}` 
         })).setMimeType(ContentService.MimeType.JSON);
     }
@@ -409,11 +411,16 @@ function registrarTransaccionProtegida_(data, auth) {
     
     const cantidad = Number(data.cantidad);
     const precioTransaccion = Number(data.precio);
+    const extraData = String(data.extra_data || "").trim();
     if (!Number.isInteger(cantidad) || cantidad <= 0) return { status: "error", message: "La cantidad debe ser un entero mayor que cero." };
     if (!Number.isFinite(precioTransaccion) || precioTransaccion < 0) return { status: "error", message: "El precio debe ser un numero valido mayor o igual a cero." };
+    if (extraData.length > 150) return { status: "error", message: "El cliente o proveedor no puede superar 150 caracteres." };
     
     let stockActual = parseFloat(rowData[stockColIndex]) || 0;
     const precioActual = isCompra ? (parseFloat(rowData[precioCompraColIndex]) || 0) : (parseFloat(rowData[precioVentaColIndex]) || 0);
+    const precioProductoColumn = isCompra ? precioCompraColIndex : precioVentaColIndex;
+    const stockOriginal = rowData[stockColIndex];
+    const precioProductoOriginal = rowData[precioProductoColumn];
     let nuevoStock;
 
     // 3. Validar stock para ventas
@@ -437,7 +444,7 @@ function registrarTransaccionProtegida_(data, auth) {
         cantidad,
         precioTransaccion,
         new Date(),
-        data.extra_data || '',
+        extraData,
         String(data.metodo_pago).toLowerCase(),
         String(data.talla).toUpperCase(),
         "ACTIVA",
@@ -448,8 +455,10 @@ function registrarTransaccionProtegida_(data, auth) {
         requestId
     ];
 
+    let transactionRowIndex = -1;
     try {
         sheet.appendRow(newRow);
+        transactionRowIndex = sheet.getLastRow();
     } catch (e) {
         return { status: "error", message: `Error al registrar transacción: ${e.message}` };
     }
@@ -493,8 +502,14 @@ function registrarTransaccionProtegida_(data, auth) {
 
     } catch (e) {
         // Si falla la actualización, revertir la transacción
-        sheet.deleteRow(sheet.getLastRow());
-        return { status: "error", message: `Error al actualizar inventario: ${e.message}` };
+        try {
+            sheetProductos.getRange(rowIndex + 1, stockColIndex + 1).setValue(stockOriginal);
+            sheetProductos.getRange(rowIndex + 1, precioProductoColumn + 1).setValue(precioProductoOriginal);
+            if (transactionRowIndex > 1 && transactionRowIndex <= sheet.getLastRow()) sheet.deleteRow(transactionRowIndex);
+        } catch (rollbackError) {
+            console.error("No se pudo completar la reversiÃ³n de la transacciÃ³n: " + rollbackError.message);
+        }
+        return { status: "error", message: `Error al actualizar inventario. No se aplicaron los cambios: ${e.message}` };
     }
 }
 
@@ -960,14 +975,25 @@ function findUser_(identifier) {
 }
 
 function login_(data) {
-    const found = findUser_(data.email);
+    const identifier = String(data.email || "").trim().toLowerCase();
+    const rateLimitKey = "login_intentos_" + Utilities.base64EncodeWebSafe(identifier || "anonimo").replace(/=/g, "");
+    const cache = CacheService.getScriptCache();
+    const attempts = Number(cache.get(rateLimitKey) || 0);
+    if (attempts >= MAX_INTENTOS_LOGIN) throw authError_("Demasiados intentos fallidos. Intenta nuevamente en unos minutos.");
+
+    const found = findUser_(identifier);
     if (!found || !found.user.activo) {
+        cache.put(rateLimitKey, String(attempts + 1), VENTANA_LOGIN_SEGUNDOS);
         throw authError_("Correo o contrasena incorrectos.");
     }
     const validPassword = found.user.password_salt
         ? found.user.password_hash === hashPassword_(data.password, found.user.password_salt)
         : found.user.password_hash === hashLegacyPassword_(data.password);
-    if (!validPassword) throw authError_("Correo o contrasena incorrectos.");
+    if (!validPassword) {
+        cache.put(rateLimitKey, String(attempts + 1), VENTANA_LOGIN_SEGUNDOS);
+        throw authError_("Correo o contrasena incorrectos.");
+    }
+    cache.remove(rateLimitKey);
     if (!found.user.password_salt) {
         const salt = generatePasswordSalt_();
         const sheet = ensureUsersSheet_();
@@ -1005,6 +1031,7 @@ function logout_(token) {
 }
 
 function validateUserData_(data, requirePassword) {
+    if (String(data.nombre || "").trim().length > 150 || String(data.cedula || "").trim().length > 30 || String(data.email || "").trim().length > 150) throw new Error("Los datos del usuario superan la longitud permitida.");
     if (!data.nombre || !data.cedula || !data.email || (requirePassword && !data.password)) throw new Error("Nombre, cédula, correo y contraseña son obligatorios.");
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(data.email))) throw new Error("El correo electrónico no es válido.");
     if (requirePassword && String(data.password).length < 8) throw new Error("La contraseña debe tener mínimo 8 caracteres.");
@@ -1020,6 +1047,16 @@ function countActiveAdmins_() {
 }
 
 function createUser_(data, auth) {
+    const lock = LockService.getScriptLock();
+    lock.waitLock(30000);
+    try {
+        return createUserProtected_(data, auth);
+    } finally {
+        lock.releaseLock();
+    }
+}
+
+function createUserProtected_(data, auth) {
     validateUserData_(data, true);
     if (findUser_(data.email) || findUser_(data.cedula)) throw new Error("Ya existe un usuario con ese correo o cédula.");
     const now = new Date();
@@ -1036,6 +1073,16 @@ function listUsers_() {
 }
 
 function updateUser_(data, auth) {
+    const lock = LockService.getScriptLock();
+    lock.waitLock(30000);
+    try {
+        return updateUserProtected_(data, auth);
+    } finally {
+        lock.releaseLock();
+    }
+}
+
+function updateUserProtected_(data, auth) {
     validateUserData_(data, false);
     const found = findUser_(data.id);
     if (!found) throw new Error("Usuario no encontrado.");
@@ -1057,6 +1104,16 @@ function updateUser_(data, auth) {
 }
 
 function deleteUser_(data, auth) {
+    const lock = LockService.getScriptLock();
+    lock.waitLock(30000);
+    try {
+        return deleteUserProtected_(data, auth);
+    } finally {
+        lock.releaseLock();
+    }
+}
+
+function deleteUserProtected_(data, auth) {
     if (data.id === auth.id) throw new Error("No puedes eliminar tu propio usuario.");
     const found = findUser_(data.id);
     if (!found) throw new Error("Usuario no encontrado.");
@@ -1073,6 +1130,7 @@ function getProfile_(auth) {
 }
 
 function updateProfile_(data, auth) {
+    if (String(data.nombre || "").trim().length > 150 || String(data.cedula || "").trim().length > 30 || String(data.email || "").trim().length > 150) throw new Error("Los datos del perfil superan la longitud permitida.");
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(data.email || ""))) throw new Error("El correo electronico no es valido.");
     const duplicateEmail = findUser_(data.email);
     if (duplicateEmail && duplicateEmail.user.id !== auth.id) throw new Error("El correo ya pertenece a otro usuario.");
@@ -1084,6 +1142,7 @@ function updateProfile_(data, auth) {
     const current = found.user;
     ensureUsersSheet_().getRange(found.row, 2, 1, 4).setValues([[data.nombre.trim(), String(data.cedula).trim(), data.fecha_nacimiento || "", data.email.trim().toLowerCase()]]);
     ensureUsersSheet_().getRange(found.row, 10).setValue(new Date());
+    registrarAuditoria_(auth, "ACTUALIZAR_PERFIL", HOJA_USUARIOS, auth.id, { campos: ["nombre", "cedula", "fecha_nacimiento", "email"] });
     return { status: "success", message: "Perfil actualizado correctamente." };
 }
 
@@ -1097,5 +1156,6 @@ function changePassword_(data, auth) {
     ensureUsersSheet_().getRange(found.row, 11).setValue(salt);
     ensureUsersSheet_().getRange(found.row, 12).setValue(found.user.session_version + 1);
     ensureUsersSheet_().getRange(found.row, 10).setValue(new Date());
+    registrarAuditoria_(auth, "CAMBIAR_PASSWORD", HOJA_USUARIOS, auth.id, { session_version: found.user.session_version + 1 });
     return { status: "success", message: "Contraseña cambiada correctamente." };
 }

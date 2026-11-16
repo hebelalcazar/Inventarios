@@ -3,26 +3,6 @@
      let currentUser = InventoryAuth.getUser();
      let appInitialized = false;
 
-     // Agrega el token de sesion a las llamadas existentes sin duplicar logica HTTP.
-     const nativeFetch = window.fetch.bind(window);
-     window.fetch = function(input, options) {
-         options = options || {};
-         const url = typeof input === 'string' ? input : input.url;
-         if (authToken && url && url.indexOf(SCRIPT_URL) === 0) {
-            if ((!options.method || options.method.toUpperCase() === 'GET') && url.indexOf('token=') === -1) {
-                 const separator = url.indexOf('?') >= 0 ? '&' : '?';
-                 input = url + separator + 'token=' + encodeURIComponent(authToken);
-             } else if (typeof options.body === 'string') {
-                 try {
-                     const payload = JSON.parse(options.body);
-                     payload.token = authToken;
-                     options.body = JSON.stringify(payload);
-                 } catch (_) { /* solicitudes no JSON no requieren token aqui */ }
-             }
-         }
-         return nativeFetch(input, options);
-     };
-      
   const mobileToggle = document.getElementById('mobileToggle');
     const sidebar = document.querySelector('.sidebar');
     
@@ -157,7 +137,7 @@
         function setupAuth() {
             document.getElementById('loginForm').addEventListener('submit', handleLogin);
             if (authToken) {
-                fetch(`${SCRIPT_URL}?action=perfil`).then(response => response.json()).then(data => {
+                InventoryApi.get('perfil').then(data => {
                     if (data.status === 'success') {
                         currentUser = data.data;
                         InventoryAuth.saveSession(authToken, currentUser);
@@ -173,7 +153,7 @@
             event.preventDefault();
             displayStatus('loginStatus', 'info', 'Validando credenciales...');
             try {
-                const data = await InventoryAuth.login(SCRIPT_URL, document.getElementById('loginEmail').value, document.getElementById('loginPassword').value);
+                const data = await InventoryApi.post({ action: 'login', email: document.getElementById('loginEmail').value, password: document.getElementById('loginPassword').value });
                 if (data.status !== 'success') throw new Error(data.message);
                 authToken = data.token;
                 currentUser = data.user;
@@ -241,8 +221,7 @@
 
         async function loadInitialData() {
             try {
-                const response = await fetch(`${SCRIPT_URL}?action=getCategorias`);
-                const data = await response.json();
+                const data = await InventoryApi.get('getCategorias');
                 
                 if (data.status === 'success') {
                     populateCategories(data.data);
@@ -365,9 +344,7 @@
 
         async function loadDashboardTransactions() {
             const filters = getDashboardFilters();
-            const query = new URLSearchParams({ action: 'getReportePeriodo', tipo: 'dashboard', periodo: filters.period, fecha: filters.date });
-            const response = await fetch(`${SCRIPT_URL}?${query.toString()}`);
-            const reportData = await response.json();
+            const reportData = await InventoryApi.get('getReportePeriodo', { tipo: 'dashboard', periodo: filters.period, fecha: filters.date });
             if (reportData.status !== 'success') throw new Error(reportData.message || 'No se pudo cargar el reporte.');
             dashboardRawData = {
                 ventas: reportData.ventas || [],
@@ -687,12 +664,7 @@
             }
 
             try {
-                const response = await fetch(SCRIPT_URL, {
-                    method: 'POST',
-                    body: JSON.stringify(data),
-                    headers: { 'Content-Type': 'text/plain;charset=utf-8' }
-                });
-                const responseData = await response.json();
+                const responseData = await InventoryApi.post(data);
 
                 if (responseData.status === 'success') {
                     displayStatus(statusDivId, 'success', responseData.message);
@@ -723,8 +695,7 @@
             if (query.length < 2) return;
 
             try {
-                const response = await fetch(`${SCRIPT_URL}?action=buscarProducto&query=${encodeURIComponent(query)}`);
-                const data = await response.json();
+                const data = await InventoryApi.get('buscarProducto', { query: query });
 
                 if (data.status === 'success' && data.data && data.data.length > 0) {
                     const product = data.data[0];
@@ -832,12 +803,7 @@
             }
 
             try {
-                const response = await fetch(SCRIPT_URL, {
-                    method: 'POST',
-                    body: JSON.stringify(transaccionData),
-                    headers: { 'Content-Type': 'text/plain;charset=utf-8' }
-                });
-                const data = await response.json();
+                const data = await InventoryApi.post(transaccionData);
 
                 if (data.status === 'success') {
                     displayStatus(statusDivId, 'success', data.message);
@@ -962,9 +928,7 @@
             table.classList.add('hidden');
             tableBody.textContent = '';
             try {
-                const query = new URLSearchParams({ action: 'getReportePeriodo', tipo: type.toLowerCase(), periodo: period, fecha: referenceDate });
-                const response = await fetch(`${SCRIPT_URL}?${query.toString()}`);
-                const data = await response.json();
+                const data = await InventoryApi.get('getReportePeriodo', { tipo: type.toLowerCase(), periodo: period, fecha: referenceDate });
                 const rows = data.status === 'success' ? (data.data || []) : [];
                 if (data.status === 'success' && rows.length > 0) {
                     displayStatus('statusResumen', 'success', `${rows.length} ${sheetName.toLowerCase()} encontradas para el periodo seleccionado.`);
@@ -1060,7 +1024,7 @@
                 id: document.getElementById('anularId').value.trim()
             };
             try {
-                const data = await (await fetch(SCRIPT_URL, { method: 'POST', body: JSON.stringify(payload), headers: { 'Content-Type': 'text/plain;charset=utf-8' } })).json();
+                const data = await InventoryApi.post(payload);
                 displayStatus('statusAnular', data.status === 'success' ? 'success' : 'error', data.message);
                 if (data.status === 'success') {
                     document.getElementById('anularForm').reset();
@@ -1078,8 +1042,7 @@
             displayStatus('statusConfig', 'info', `Procesando la acción de ${action}...`);
 
             try {
-                const response = await fetch(`${SCRIPT_URL}?action=${action}`);
-                const data = await response.json();
+                const data = await InventoryApi.get(action);
 
                 if (data.status === 'success') {
                     displayStatus('statusConfig', 'success', data.message);
@@ -1100,8 +1063,7 @@
         }
         
         async function loadUsers() {
-            const response = await fetch(`${SCRIPT_URL}?action=usuarios`);
-            const data = await response.json();
+            const data = await InventoryApi.get('usuarios');
             if (data.status !== 'success') return displayStatus('statusUsuarios', 'error', data.message);
             const tableBody = document.getElementById('usuariosTableBody');
             tableBody.replaceChildren();
@@ -1132,14 +1094,14 @@
             const id = document.getElementById('u_id').value;
             const payload = { action: id ? 'actualizarUsuario' : 'crearUsuario', id: id, nombre: document.getElementById('u_nombre').value, cedula: document.getElementById('u_cedula').value, fecha_nacimiento: document.getElementById('u_fecha_nacimiento').value, email: document.getElementById('u_email').value, password: document.getElementById('u_password').value, rol: document.getElementById('u_rol').value, activo: true };
             try {
-                const data = await (await fetch(SCRIPT_URL, { method: 'POST', body: JSON.stringify(payload), headers: { 'Content-Type': 'text/plain;charset=utf-8' } })).json();
+                const data = await InventoryApi.post(payload);
                 displayStatus('statusUsuarios', data.status === 'success' ? 'success' : 'error', data.message);
                 if (data.status === 'success') { resetUserForm(); loadUsers(); }
             } catch (error) { displayStatus('statusUsuarios', 'error', error.message); }
         }
 
         window.editUser = async function(id) {
-            const data = await (await fetch(`${SCRIPT_URL}?action=usuarios`)).json();
+            const data = await InventoryApi.get('usuarios');
             const user = (data.data || []).find(item => item.id === id);
             if (!user) return;
             document.getElementById('u_id').value = user.id;
@@ -1153,7 +1115,7 @@
 
         window.removeUser = async function(id) {
             if (!confirm('¿Deseas desactivar este usuario?')) return;
-            const data = await (await fetch(SCRIPT_URL, { method: 'POST', body: JSON.stringify({ action: 'eliminarUsuario', id: id }), headers: { 'Content-Type': 'text/plain;charset=utf-8' } })).json();
+            const data = await InventoryApi.post({ action: 'eliminarUsuario', id: id });
             displayStatus('statusUsuarios', data.status === 'success' ? 'success' : 'error', data.message);
             if (data.status === 'success') loadUsers();
         };
@@ -1161,7 +1123,7 @@
         function resetUserForm() { document.getElementById('usuarioForm').reset(); document.getElementById('u_id').value = ''; }
 
         async function loadProfile() {
-            const data = await (await fetch(`${SCRIPT_URL}?action=perfil`)).json();
+            const data = await InventoryApi.get('perfil');
             if (data.status !== 'success') return;
             const user = data.data;
             document.getElementById('perfilNombre').value = user.nombre;
@@ -1173,20 +1135,20 @@
         async function saveProfile(event) {
             event.preventDefault();
             const payload = { action: 'actualizarPerfil', nombre: document.getElementById('perfilNombre').value, cedula: document.getElementById('perfilCedula').value, fecha_nacimiento: document.getElementById('perfilFechaNacimiento').value, email: document.getElementById('perfilEmail').value };
-            const data = await (await fetch(SCRIPT_URL, { method: 'POST', body: JSON.stringify(payload), headers: { 'Content-Type': 'text/plain;charset=utf-8' } })).json();
+            const data = await InventoryApi.post(payload);
             displayStatus('statusPerfil', data.status === 'success' ? 'success' : 'error', data.message);
         }
 
         async function changePassword(event) {
             event.preventDefault();
             const payload = { action: 'cambiarPassword', currentPassword: document.getElementById('currentPassword').value, newPassword: document.getElementById('newPassword').value };
-            const data = await (await fetch(SCRIPT_URL, { method: 'POST', body: JSON.stringify(payload), headers: { 'Content-Type': 'text/plain;charset=utf-8' } })).json();
+            const data = await InventoryApi.post(payload);
             displayStatus('statusPassword', data.status === 'success' ? 'success' : 'error', data.message);
             if (data.status === 'success') document.getElementById('passwordForm').reset();
         }
 
         async function logout() {
-            try { await (await fetch(SCRIPT_URL, { method: 'POST', body: JSON.stringify({ action: 'logout' }), headers: { 'Content-Type': 'text/plain;charset=utf-8' } })).json(); } catch (_) {}
+            try { await InventoryApi.post({ action: 'logout' }); } catch (_) {}
             clearSession();
             window.location.reload();
         }

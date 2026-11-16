@@ -14,8 +14,14 @@
         } finally {
             clearTimeout(timeoutId);
         }
-        if (!response.ok) throw new Error(`Error de red (${response.status}).`);
-        const data = await response.json();
+        const responseText = await response.text();
+        let data;
+        try {
+            data = JSON.parse(responseText);
+        } catch (_) {
+            throw new Error(response.ok ? 'El servidor devolvio una respuesta no valida.' : `Error de red (${response.status}).`);
+        }
+        if (!response.ok) throw new Error(data.message || `Error de red (${response.status}).`);
         if (data.status === 'unauthorized') {
             InventoryAuth.clearSession();
         }
