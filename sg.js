@@ -11,6 +11,7 @@ const HOJA_VENTAS = "Ventas";
 const HOJA_RESUMEN = "resumen_diario";
 const HOJA_USUARIOS = "Usuarios";
 const HOJA_AUDITORIA = "Auditoria";
+const UMBRAL_STOCK_BAJO = 3;
 
 // Encabezados
 const CATEGORIAS_HEADERS = ["id", "nombre"];
@@ -280,6 +281,7 @@ function agregarProducto(data, auth) {
 
     try {
         sheet.appendRow(newRow);
+        notificarStockBajo_(newId, nombre, stock, auth);
         registrarAuditoria_(auth, "CREAR_PRODUCTO", HOJA_PRODUCTOS, newId, { nombre: data.nombre, talla: data.talla });
         return { status: "success", message: `Producto '${data.nombre}' registrado con éxito. ID: ${newId}` };
     } catch (e) {
@@ -402,7 +404,8 @@ function registrarTransaccionProtegida_(data, auth) {
     const precioCompraColIndex = productColumns.precio_compra;
     const precioVentaColIndex = productColumns.precio_venta;
     const tallaColIndex = productColumns.talla;
-    if ([stockColIndex, precioCompraColIndex, precioVentaColIndex, tallaColIndex].some(function (index) { return index === undefined; })) {
+    const nombreColIndex = productColumns.nombre;
+    if ([stockColIndex, precioCompraColIndex, precioVentaColIndex, tallaColIndex, nombreColIndex].some(function (index) { return index === undefined; })) {
         return { status: "error", message: "La estructura de la hoja Productos no contiene todas las columnas necesarias." };
     }
     
@@ -470,6 +473,8 @@ function registrarTransaccionProtegida_(data, auth) {
             }
         }
 
+        notificarStockBajo_(data.producto_id, rowData[nombreColIndex], nuevoStock, auth);
+
         registrarAuditoria_(auth, isCompra ? "REGISTRAR_COMPRA" : "REGISTRAR_VENTA", isCompra ? HOJA_COMPRAS : HOJA_VENTAS, transaccionId, {
             producto_id: data.producto_id,
             cantidad: cantidad,
@@ -535,9 +540,10 @@ function anularTransaccion(data, auth) {
         if (product.rowIndex === -1) throw new Error("El producto asociado ya no existe.");
         const productColumns = getHeaderMap_(products);
         const stockColumn = productColumns.stock;
+        const nameColumn = productColumns.nombre;
         const purchasePriceColumn = productColumns.precio_compra;
         const salePriceColumn = productColumns.precio_venta;
-        if ([stockColumn, purchasePriceColumn, salePriceColumn].some(function (index) { return index === undefined; })) throw new Error("La estructura de la hoja Productos no es valida.");
+        if ([stockColumn, nameColumn, purchasePriceColumn, salePriceColumn].some(function (index) { return index === undefined; })) throw new Error("La estructura de la hoja Productos no es valida.");
         const currentStock = Number(product.rowData[stockColumn]) || 0;
         const newStock = isCompra ? currentStock - quantity : currentStock + quantity;
         if (newStock < 0) throw new Error("No se puede anular la compra porque el stock ya fue utilizado.");
@@ -552,6 +558,7 @@ function anularTransaccion(data, auth) {
         if (hasPriceHistory && Number.isFinite(transactionPriceBefore) && Number.isFinite(transactionPriceAfter) && currentProductPrice === transactionPriceAfter) {
             products.getRange(product.rowIndex + 1, productPriceColumn + 1).setValue(transactionPriceBefore);
         }
+        notificarStockBajo_(productId, product.rowData[nameColumn], newStock, auth);
         sheet.getRange(transactionRow + 1, statusIndex + 1).setValue("ANULADA");
         registrarAuditoria_(auth, "ANULAR_TRANSACCION", isCompra ? HOJA_COMPRAS : HOJA_VENTAS, data.id, { producto_id: productId, cantidad: quantity, stock_resultante: newStock, precio_restaurado: hasPriceHistory && Number.isFinite(transactionPriceBefore) && currentProductPrice === transactionPriceAfter });
         return { status: "success", message: "Transaccion anulada y stock revertido correctamente." };
@@ -869,6 +876,45 @@ function registrarAuditoria_(auth, accion, entidad, entidadId, detalle) {
         ]);
     } catch (error) {
         console.error("No se pudo registrar auditoria: " + error.message);
+    }
+}
+
+function getActiveAdminEmails_() {
+    const sheet = ensureUsersSheet_();
+    if (sheet.getLastRow() < 2) return [];
+    return sheet.getDataRange().getValues().slice(1).map(rowToUser_).filter(function (user) {
+        return user.activo && user.rol === "admin" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(user.email);
+    }).map(function (user) { return user.email; });
+}
+
+function notificarStockBajo_(productoId, nombreProducto, stock, auth) {
+    const numericStock = Number(stock);
+    const key = "stock_alerta_" + String(productoId).replace(/[^a-zA-Z0-9_-]/g, "_");
+    try {
+        const properties = PropertiesService.getScriptProperties();
+        if (!Number.isFinite(numericStock)) return;
+        if (numericStock > UMBRAL_STOCK_BAJO) {
+            properties.deleteProperty(key);
+            return;
+        }
+        if (properties.getProperty(key) === "enviada") return;
+        const recipients = getActiveAdminEmails_();
+        if (!recipients.length) return;
+        const subject = `Alerta de stock bajo - ${nombreProducto}`;
+        const body = [
+            "Moteros Popayán - Alerta de inventario",
+            "",
+            `El producto '${nombreProducto}' tiene ${numericStock} unidad(es) disponibles.`,
+            `ID del producto: ${productoId}`,
+            `Umbral configurado: ${UMBRAL_STOCK_BAJO} unidades.`,
+            "",
+            "Se recomienda abastecer este producto."
+        ].join("\n");
+        MailApp.sendEmail({ to: recipients.join(","), subject: subject, body: body });
+        properties.setProperty(key, "enviada");
+        registrarAuditoria_(auth, "ALERTA_STOCK_BAJO", HOJA_PRODUCTOS, productoId, { stock: numericStock, destinatarios: recipients });
+    } catch (error) {
+        console.error("No se pudo enviar la alerta de stock bajo: " + error.message);
     }
 }
 

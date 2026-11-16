@@ -20,6 +20,16 @@
 
 Las funciones de seguridad agregan automáticamente columnas nuevas cuando son necesarias. No se deben eliminar las columnas `password_salt`, `session_version`, `stock_anterior`, `stock_posterior`, `precio_anterior`, `precio_posterior` ni `request_id`.
 
+### Alertas de stock bajo
+
+El backend envia un correo a los administradores activos cuando un producto queda con 3 unidades o menos. Para que funcione:
+
+1. Cada administrador debe tener un correo valido en la hoja `Usuarios` y estar activo.
+2. Al guardar `sg.js` en Apps Script, aceptar los permisos solicitados para `MailApp` y `PropertiesService`.
+3. Publicar una nueva version del despliegue.
+
+La alerta se envia una sola vez mientras el producto permanezca bajo el umbral. Si el stock vuelve a ser mayor que 3 y luego vuelve a bajar, se genera una nueva alerta.
+
 ## 3. GitHub
 
 Subir individualmente los archivos de la raíz:
