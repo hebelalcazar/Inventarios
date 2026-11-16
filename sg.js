@@ -385,20 +385,8 @@ function registrarTransaccionProtegida_(data, auth) {
         return { status: "error", message: "Seleccione un metodo de pago valido." };
     }
 
-    // 1. Validar producto y obtener fila actual
+    // 1. Obtener datos actuales del producto y sus columnas
     const { rowData, rowIndex } = findProductRow(sheetProductos, data.producto_id);
-    
-    if (rowIndex !== -1) {
-        const tallaProducto = String(rowData[tallaColIndex] || "N/A").toUpperCase();
-        if (String(data.talla || "").toUpperCase() !== tallaProducto) {
-            return { status: "error", message: `La talla seleccionada no coincide con la talla del producto (${tallaProducto}).` };
-        }
-    }
-    if (rowIndex === -1) {
-        return { status: "error", message: `Producto ID ${data.producto_id} no encontrado en inventario.` };
-    }
-    
-    // 2. Obtener datos actuales del producto
     const productColumns = getHeaderMap_(sheetProductos);
     const stockColIndex = productColumns.stock;
     const precioCompraColIndex = productColumns.precio_compra;
@@ -407,6 +395,16 @@ function registrarTransaccionProtegida_(data, auth) {
     const nombreColIndex = productColumns.nombre;
     if ([stockColIndex, precioCompraColIndex, precioVentaColIndex, tallaColIndex, nombreColIndex].some(function (index) { return index === undefined; })) {
         return { status: "error", message: "La estructura de la hoja Productos no contiene todas las columnas necesarias." };
+    }
+
+    if (rowIndex === -1) {
+        return { status: "error", message: `Producto ID ${data.producto_id} no encontrado en inventario.` };
+    }
+
+    // 2. Validar que la talla de la transaccion coincida con el producto
+    const tallaProducto = String(rowData[tallaColIndex] || "N/A").toUpperCase();
+    if (String(data.talla || "").toUpperCase() !== tallaProducto) {
+        return { status: "error", message: `La talla seleccionada no coincide con la talla del producto (${tallaProducto}).` };
     }
     
     const cantidad = Number(data.cantidad);
