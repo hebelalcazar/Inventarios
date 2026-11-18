@@ -5,12 +5,32 @@
         });
     }
 
+    function normalizeFieldName(value) {
+        return String(value || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
+    }
+
+    function getProductField(product, fieldName, fallback) {
+        const directValue = product[fieldName];
+        if (directValue !== undefined && directValue !== null) return directValue;
+        const normalizedName = normalizeFieldName(fieldName);
+        const key = Object.keys(product).find(function (candidate) {
+            return normalizeFieldName(candidate) === normalizedName;
+        });
+        if (!key && fieldName === 'codigo') return product[Object.keys(product)[2]] ?? fallback;
+        if (!key && fieldName === 'categoria') return product[Object.keys(product)[3]] ?? fallback;
+        return key ? product[key] : fallback;
+    }
+
     function renderTable(tableBodyId, products, page, pageSize) {
         const tableBody = document.getElementById(tableBodyId);
         const totalPages = Math.max(1, Math.ceil(products.length / pageSize));
         const safePage = Math.min(Math.max(page, 1), totalPages);
         const start = (safePage - 1) * pageSize;
         const pageProducts = products.slice(start, start + pageSize);
+        pageProducts.forEach(function (product) {
+            if (product.codigo === undefined) product.codigo = getProductField(product, 'codigo', '');
+            if (product.categoria === undefined) product.categoria = getProductField(product, 'categoria', '');
+        });
 
         tableBody.innerHTML = pageProducts.map(function (product) {
             const stock = Number(product.stock) || 0;
@@ -29,8 +49,14 @@
         return { page: safePage, totalPages: totalPages };
     }
 
-    function filter(products, query, talla) {
+    function filter(products, query, talla, categoria) {
         const normalizedQuery = String(query || '').toLowerCase().trim();
+        const normalizedCategory = String(categoria || '').toLowerCase().trim();
+        if (normalizedCategory) {
+            products = products.filter(function (product) {
+                return String(getProductField(product, 'categoria', '')).toLowerCase() === normalizedCategory;
+            });
+        }
         return products.filter(function (product) {
             const code = product['cÃ³digo'] || product.codigo || '';
             const searchable = `${product.nombre || ''} ${code} ${product.id || ''}`.toLowerCase();
@@ -39,5 +65,5 @@
     }
 
     window.escapeHtml = escapeHtml;
-    window.InventoryModule = { renderTable: renderTable, filter: filter };
+    window.InventoryModule = { renderTable: renderTable, filter: filter, getProductField: getProductField };
 })();

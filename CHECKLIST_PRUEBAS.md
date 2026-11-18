@@ -28,7 +28,7 @@
 - [ ] Crear producto válido.
 - [ ] Rechazar producto sin nombre, código o categoría.
 - [ ] Rechazar código de producto duplicado.
-- [ ] Validar tallas S, M, L, XL, XXL y N/A.
+- [ ] Validar tallas S, M, L, XL, XXL, XXXL y N/A.
 - [ ] Mostrar talla en inventario.
 - [ ] Buscar por nombre, código e ID.
 - [ ] Filtrar por talla.

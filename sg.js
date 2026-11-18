@@ -240,10 +240,20 @@ function ensureProductSizeColumn_(sheet) {
 }
 
 function agregarProducto(data, auth) {
+    const lock = LockService.getScriptLock();
+    lock.waitLock(30000);
+    try {
+        return agregarProductoProtegido_(data, auth);
+    } finally {
+        lock.releaseLock();
+    }
+}
+
+function agregarProductoProtegido_(data, auth) {
     
     const sheetForSize = getSpreadsheet().getSheetByName(HOJA_PRODUCTOS);
     ensureProductSizeColumn_(sheetForSize);
-    if (["S", "M", "L", "XL", "XXL", "N/A"].indexOf(String(data.talla || "").toUpperCase()) === -1) {
+    if (["S", "M", "L", "XL", "XXL", "XXXL", "N/A"].indexOf(String(data.talla || "").toUpperCase()) === -1) {
         return { status: "error", message: "Seleccione una talla valida." };
     }
     const nombre = String(data.nombre || "").trim();
@@ -263,6 +273,27 @@ function agregarProducto(data, auth) {
         return { status: "error", message: `La pestaña '${HOJA_PRODUCTOS}' no existe. Inicie la Base de Datos.` };
     }
     
+    const productValues = sheet.getDataRange().getValues();
+    const productHeaders = getHeaderMap_(sheet);
+    const tallaIndex = productHeaders.talla === undefined ? 8 : productHeaders.talla;
+    for (let rowIndex = 1; rowIndex < productValues.length; rowIndex++) {
+        const row = productValues[rowIndex];
+        const sameName = String(row[1] || '').trim().toLowerCase() === nombre.toLowerCase();
+        const sameCode = String(row[2] || '').trim().toLowerCase() === codigo.toLowerCase();
+        const sameSize = String(row[tallaIndex] || 'N/A').trim().toUpperCase() === String(data.talla).toUpperCase();
+        if (sameName && sameCode && sameSize) {
+            const stockAnterior = Number(row[6]) || 0;
+            const stockActualizado = stockAnterior + stock;
+            sheet.getRange(rowIndex + 1, 5).setValue(precioCompra);
+            sheet.getRange(rowIndex + 1, 6).setValue(precioVenta);
+            sheet.getRange(rowIndex + 1, 7).setValue(stockActualizado);
+            const existingId = row[0];
+            notificarStockBajo_(existingId, nombre, stockActualizado, auth);
+            registrarAuditoria_(auth, "ACUMULAR_STOCK_PRODUCTO", HOJA_PRODUCTOS, existingId, { nombre: nombre, codigo: codigo, talla: data.talla, stock_anterior: stockAnterior, stock_agregado: stock, stock_resultante: stockActualizado });
+            return { status: "success", message: `Producto existente actualizado. Stock acumulado: ${stockActualizado} unidades.` };
+        }
+    }
+
     const existingProducts = getData(HOJA_PRODUCTOS);
     if (existingProducts.status === "success" && existingProducts.data.some(function(product) {
         return String(product["cÃ³digo"] || product.codigo || "").trim().toLowerCase() === codigo.toLowerCase();

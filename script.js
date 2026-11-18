@@ -320,6 +320,7 @@
             document.getElementById('cargarInventarioBtn').addEventListener('click', loadInventario);
             document.getElementById('inventarioFiltro').addEventListener('input', filterInventory);
             document.getElementById('inventarioTallaFiltro').addEventListener('change', filterInventory);
+            document.getElementById('inventarioCategoriaFiltro').addEventListener('change', filterInventory);
             document.getElementById('cargarDatosGraficosBtn').addEventListener('click', handleLoadDashboard);
             document.getElementById('calcularResumenBtn').addEventListener('click', calcularResumenFinanciero);
             document.getElementById('exportarDashboardBtn').addEventListener('click', exportCurrentDashboard);
@@ -847,6 +848,7 @@
                     }).join('');
                     */
                     inventarioCache = data.data;
+                    populateInventoryCategories(inventarioCache);
                     inventarioPagina = 1;
                     renderInventoryTable(inventarioCache);
                     const lowStock = inventarioCache.filter(p => Number(p.stock) < 5);
@@ -892,11 +894,23 @@
             document.getElementById('inventarioSiguiente').disabled = inventarioPagina >= totalPaginas;
         }
 
+        function populateInventoryCategories(products) {
+            const select = document.getElementById('inventarioCategoriaFiltro');
+            const currentValue = select.value;
+            const categories = Array.from(new Set((products || []).map(function (product) {
+                return String(InventoryModule.getProductField(product, 'categoria', '') || '').trim();
+            }).filter(Boolean))).sort(function (a, b) { return a.localeCompare(b); });
+            select.replaceChildren(new Option('Todas las categorias', ''));
+            categories.forEach(function (category) { select.add(new Option(category, category)); });
+            if (categories.indexOf(currentValue) !== -1) select.value = currentValue;
+        }
+
         function filterInventory() {
             const query = document.getElementById('inventarioFiltro').value;
             const talla = document.getElementById('inventarioTallaFiltro').value;
+            const categoria = document.getElementById('inventarioCategoriaFiltro').value;
             inventarioPagina = 1;
-            renderInventoryTable(InventoryModule.filter(inventarioCache, query, talla));
+            renderInventoryTable(InventoryModule.filter(inventarioCache, query, talla, categoria));
             return;
 
             const legacyQuery = document.getElementById('inventarioFiltro').value.toLowerCase().trim();
