@@ -21,7 +21,7 @@
         return key ? product[key] : fallback;
     }
 
-    function renderTable(tableBodyId, products, page, pageSize) {
+    function renderTable(tableBodyId, products, page, pageSize, isAdmin) {
         const tableBody = document.getElementById(tableBodyId);
         const totalPages = Math.max(1, Math.ceil(products.length / pageSize));
         const safePage = Math.min(Math.max(page, 1), totalPages);
@@ -43,6 +43,7 @@
                 <td>${escapeHtml(product.talla || 'N/A')}</td>
                 <td ${stockStyle}>${stock}</td>
                 <td>$${(Number(product.precio_venta) || 0).toFixed(2)}</td>
+                ${isAdmin ? `<td><button type="button" class="btn secondary-btn btn-small inventory-edit-btn" data-product-id="${escapeHtml(product.id)}">Editar</button> <button type="button" class="btn danger-btn btn-small inventory-delete-btn" data-product-id="${escapeHtml(product.id)}">Eliminar</button></td>` : ''}
             </tr>`;
         }).join('') || '<tr><td colspan="7">No hay productos que coincidan con el filtro.</td></tr>';
 

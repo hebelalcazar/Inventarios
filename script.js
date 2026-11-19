@@ -129,6 +129,7 @@
         let resumenFinancieroChart, tendenciasChart;
         let dashboardRawData = { ventas: [], compras: [] };
         let dashboardReportSeries = [];
+        let productoEditandoId = '';
 
         document.addEventListener('DOMContentLoaded', () => {
             setupAuth();
@@ -296,7 +297,7 @@
 
             // Categorías y Productos
             document.getElementById('categoriaForm').addEventListener('submit', (e) => handlePostAction(e, 'agregarCategoria', 'statusCategoria'));
-            document.getElementById('productoForm').addEventListener('submit', (e) => handlePostAction(e, 'agregarProducto', 'statusProducto'));
+            document.getElementById('productoForm').addEventListener('submit', (e) => handlePostAction(e, productoEditandoId ? 'actualizarProducto' : 'agregarProducto', 'statusProducto'));
             
             // Compras/Ventas
             document.getElementById('co_query').addEventListener('input', (e) => handleQueryFilter(e.target.value, 'co'));
@@ -321,6 +322,8 @@
             document.getElementById('inventarioFiltro').addEventListener('input', filterInventory);
             document.getElementById('inventarioTallaFiltro').addEventListener('change', filterInventory);
             document.getElementById('inventarioCategoriaFiltro').addEventListener('change', filterInventory);
+            document.getElementById('inventarioTableBody').addEventListener('click', handleInventoryAction);
+            document.getElementById('cancelarEdicionProductoBtn').addEventListener('click', cancelarEdicionProducto);
             document.getElementById('cargarDatosGraficosBtn').addEventListener('click', handleLoadDashboard);
             document.getElementById('calcularResumenBtn').addEventListener('click', calcularResumenFinanciero);
             document.getElementById('exportarDashboardBtn').addEventListener('click', exportCurrentDashboard);
@@ -639,6 +642,49 @@
         }
 
         // ================= REST OF THE FUNCTIONS (sin cambios) =================
+
+        function handleInventoryAction(event) {
+            const button = event.target.closest('button[data-product-id]');
+            if (!button) return;
+            const productId = button.dataset.productId;
+            const product = inventarioCache.find(function (item) { return String(item.id) === String(productId); });
+            if (!product) return;
+            if (button.classList.contains('inventory-edit-btn')) {
+                productoEditandoId = productId;
+                document.getElementById('p_nombre').value = product.nombre || '';
+                document.getElementById('p_codigo').value = InventoryModule.getProductField(product, 'codigo', '');
+                document.getElementById('p_categoria').value = InventoryModule.getProductField(product, 'categoria', '');
+                document.getElementById('p_talla').value = product.talla || 'N/A';
+                document.getElementById('p_precio_compra').value = Number(product.precio_compra || 0).toFixed(2);
+                document.getElementById('p_precio_venta').value = Number(product.precio_venta || 0).toFixed(2);
+                document.getElementById('p_stock').value = Number(product.stock || 0);
+                document.getElementById('p_stock').readOnly = true;
+                document.getElementById('productoSubmitBtn').innerHTML = '<i class="fas fa-save"></i> Guardar cambios';
+                document.getElementById('cancelarEdicionProductoBtn').classList.remove('hidden');
+                document.getElementById('productos').scrollIntoView({ behavior: 'smooth' });
+            } else if (button.classList.contains('inventory-delete-btn')) {
+                eliminarProducto(productId);
+            }
+        }
+
+        function cancelarEdicionProducto() {
+            productoEditandoId = '';
+            document.getElementById('productoForm').reset();
+            document.getElementById('p_stock').readOnly = false;
+            document.getElementById('productoSubmitBtn').innerHTML = '<i class="fas fa-save"></i> Registrar Nuevo Producto';
+            document.getElementById('cancelarEdicionProductoBtn').classList.add('hidden');
+        }
+
+        async function eliminarProducto(productId) {
+            if (!window.confirm('Solo se eliminara el producto si no tiene stock ni movimientos activos. ¿Deseas continuar?')) return;
+            try {
+                const data = await InventoryApi.post({ action: 'eliminarProducto', id: productId });
+                displayStatus('statusInventario', data.status === 'success' ? 'success' : 'error', data.message);
+                if (data.status === 'success') await loadInventario();
+            } catch (error) {
+                displayStatus('statusInventario', 'error', error.message);
+            }
+        }
         
         async function handlePostAction(e, action, statusDivId) {
             e.preventDefault();
@@ -654,8 +700,9 @@
                 }
             });
             data.action = action;
+            if (action === 'actualizarProducto') data.id = productoEditandoId;
 
-            if (action === 'agregarProducto') {
+            if (action === 'agregarProducto' || action === 'actualizarProducto') {
                 const validationMessage = InventoryValidation.validateProduct(data);
                 if (validationMessage) {
                     displayStatus(statusDivId, 'error', validationMessage);
@@ -673,6 +720,10 @@
                     if (action === 'agregarCategoria') {
                         loadInitialData();
                     }
+                    if (action === 'actualizarProducto') {
+                        cancelarEdicionProducto();
+                        loadInventario();
+                    }
                 } else {
                     displayStatus(statusDivId, 'error', responseData.message);
                 }
@@ -685,11 +736,16 @@
         
         async function handleQueryFilter(query, prefix) {
             const detailDiv = document.getElementById(`${prefix}_product_details`);
+            const suggestionsDiv = document.getElementById(`${prefix}_product_suggestions`);
             const submitBtn = document.getElementById(`${prefix}_submit_btn`);
             const idInput = document.getElementById(`${prefix}_producto_id`);
             
             detailDiv.classList.add('hidden');
             detailDiv.innerHTML = '';
+            if (suggestionsDiv) {
+                suggestionsDiv.replaceChildren();
+                suggestionsDiv.classList.add('hidden');
+            }
             idInput.value = '';
             submitBtn.disabled = true;
 
@@ -699,11 +755,7 @@
                 const data = await InventoryApi.get('buscarProducto', { query: query });
 
                 if (data.status === 'success' && data.data && data.data.length > 0) {
-                    const product = data.data[0];
-                    productDataCache[product.id] = product;
-                    updateProductDetails(product, detailDiv, prefix);
-                    idInput.value = product.id;
-                    submitBtn.disabled = false;
+                    renderProductSuggestions(data.data, prefix);
                 } else {
                     detailDiv.classList.remove('hidden');
                     detailDiv.innerHTML = `<p style="color:var(--danger-color);"><i class="fas fa-exclamation-triangle"></i> ${data.message || 'No se encontraron productos.'}</p>`;
@@ -713,6 +765,40 @@
                 detailDiv.classList.remove('hidden');
                 detailDiv.innerHTML = `<p style="color:var(--danger-color);">Error de búsqueda: ${error.message}</p>`;
             }
+        }
+
+        function renderProductSuggestions(products, prefix) {
+            const suggestionsDiv = document.getElementById(`${prefix}_product_suggestions`);
+            if (!suggestionsDiv) return;
+            suggestionsDiv.replaceChildren();
+            products.slice(0, 10).forEach(function (product) {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'product-suggestion';
+                button.dataset.productId = product.id;
+                const code = InventoryModule.getProductField(product, 'codigo', '');
+                const category = InventoryModule.getProductField(product, 'categoria', '');
+                button.textContent = `${product.nombre || ''} | Código: ${code} | Categoría: ${category} | Talla: ${product.talla || 'N/A'} | Stock: ${product.stock ?? 0}`;
+                button.addEventListener('click', function () { selectProductSuggestion(product, prefix); });
+                suggestionsDiv.append(button);
+            });
+            suggestionsDiv.classList.remove('hidden');
+        }
+
+        function selectProductSuggestion(product, prefix) {
+            const detailDiv = document.getElementById(`${prefix}_product_details`);
+            const suggestionsDiv = document.getElementById(`${prefix}_product_suggestions`);
+            const idInput = document.getElementById(`${prefix}_producto_id`);
+            const submitBtn = document.getElementById(`${prefix}_submit_btn`);
+            productDataCache[product.id] = product;
+            idInput.value = product.id;
+            document.getElementById(`${prefix}_query`).value = `${product.nombre || ''} - ${InventoryModule.getProductField(product, 'codigo', '')}`;
+            if (suggestionsDiv) {
+                suggestionsDiv.replaceChildren();
+                suggestionsDiv.classList.add('hidden');
+            }
+            updateProductDetails(product, detailDiv, prefix);
+            submitBtn.disabled = false;
         }
 
         function updateProductDetails(product, detailDiv, prefix) {
@@ -858,17 +944,17 @@
                     if (lowStock.length) alert.innerHTML = `<i class="fas fa-exclamation-triangle"></i> ${lowStock.length} producto(s) tienen stock bajo.`;
                 } else {
                     displayStatus('statusInventario', 'warning', data.message);
-                    tableBody.innerHTML = '<tr><td colspan="7">No hay productos en inventario.</td></tr>';
+                    tableBody.innerHTML = '<tr><td colspan="8">No hay productos en inventario.</td></tr>';
                 }
             } catch (error) {
                 displayStatus('statusInventario', 'error', `Error al cargar inventario: ${error.message}`);
-                tableBody.innerHTML = '<tr><td colspan="7">Error al cargar datos.</td></tr>';
+                tableBody.innerHTML = '<tr><td colspan="8">Error al cargar datos.</td></tr>';
             }
         }
         
         function renderInventoryTable(products) {
             inventarioFiltrado = products;
-            const result = InventoryModule.renderTable('inventarioTableBody', products, inventarioPagina, inventarioPorPagina);
+            const result = InventoryModule.renderTable('inventarioTableBody', products, inventarioPagina, inventarioPorPagina, currentUser && currentUser.rol === 'admin');
             inventarioPagina = result.page;
             const legacyControls = document.getElementById('inventarioPaginacion');
             legacyControls.classList.toggle('hidden', products.length <= inventarioPorPagina);

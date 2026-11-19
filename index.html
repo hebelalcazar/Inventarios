@@ -184,10 +184,11 @@
                 <th>Talla</th>
                 <th>Stock</th>
                 <th>P. Venta</th>
+                <th data-role="admin">Acciones</th>
             </tr>
         </thead>
         <tbody id="inventarioTableBody">
-            <tr><td colspan="7">Presiona "Refrescar Inventario" para cargar los datos.</td></tr>
+            <tr><td colspan="8">Presiona "Refrescar Inventario" para cargar los datos.</td></tr>
         </tbody>
     </table>
     <div class="scroll-hint hidden" id="inventarioScrollHint">
@@ -246,9 +247,10 @@
                         <input type="number" id="p_stock" required min="0">
                     </div>
 
-                    <button type="submit" class="btn primary-btn full-width">
+                    <button type="submit" id="productoSubmitBtn" class="btn primary-btn full-width">
                         <i class="fas fa-save"></i> Registrar Nuevo Producto
                     </button>
+                    <button type="button" id="cancelarEdicionProductoBtn" class="btn secondary-btn full-width hidden">Cancelar edición</button>
                 </form>
                 <div id="statusProducto" class="status-message"></div>
             </section>
@@ -327,7 +329,8 @@
                 <form id="ventaForm" class="form-grid">
                     <div class="form-group">
                         <label for="v_query">Buscar Producto (ID, Código o Nombre):</label>
-                        <input type="text" id="v_query" required placeholder="Escriba para buscar y cargar datos">
+                        <input type="text" id="v_query" required placeholder="Busque por nombre, codigo o categoria">
+                        <div id="v_product_suggestions" class="product-suggestions hidden" role="listbox" aria-label="Productos sugeridos"></div>
                     </div>
                     <div class="form-group">
                         <label for="v_cantidad">Cantidad Vendida:</label>

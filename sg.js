@@ -113,6 +113,14 @@ function doPost(e) {
             const auth = authenticate_(requestData.token);
             requireRole_(auth, ["admin"]);
             result = agregarProducto(requestData, auth);
+        } else if (action === "actualizarProducto") {
+            const auth = authenticate_(requestData.token);
+            requireRole_(auth, ["admin"]);
+            result = actualizarProducto_(requestData, auth);
+        } else if (action === "eliminarProducto") {
+            const auth = authenticate_(requestData.token);
+            requireRole_(auth, ["admin"]);
+            result = eliminarProducto_(requestData, auth);
         } else if (action === "registrarTransaccion") {
             const auth = authenticate_(requestData.token);
             requireRole_(auth, ["admin", "vendedor"]);
@@ -220,7 +228,8 @@ function buscarProducto(query) {
 
         return idStr.toLowerCase().includes(lowerQuery) ||
                codigoStr.toLowerCase().includes(lowerQuery) ||
-               nombreStr.toLowerCase().includes(lowerQuery);
+               nombreStr.toLowerCase().includes(lowerQuery) ||
+               String(Object.values(p)[3] || '').toLowerCase().includes(lowerQuery);
     });
 
     if (results.length > 0) {
@@ -325,6 +334,82 @@ function agregarProductoProtegido_(data, auth) {
 // ----------------------------------------------------------------------
 // FUNCIONES DE GESTIÓN DE TRANSACCIONES (COMPRAS/VENTAS)
 // ----------------------------------------------------------------------
+function actualizarProducto_(data, auth) {
+    const lock = LockService.getScriptLock();
+    lock.waitLock(30000);
+    try {
+        const sheet = getSpreadsheet().getSheetByName(HOJA_PRODUCTOS);
+        if (!sheet) throw new Error("La pestana Productos no existe.");
+        ensureProductSizeColumn_(sheet);
+        const nombre = String(data.nombre || '').trim();
+        const codigo = String(data.codigo || '').trim();
+        const categoria = String(data.categoria || '').trim();
+        const talla = String(data.talla || '').toUpperCase();
+        const precioCompra = Number(data.precio_compra);
+        const precioVenta = Number(data.precio_venta);
+        if (!nombre || !codigo || !categoria) throw new Error("Nombre, codigo y categoria son obligatorios.");
+        if (nombre.length > 150 || codigo.length > 80 || categoria.length > 100) throw new Error("Los datos del producto superan la longitud permitida.");
+        if (["S", "M", "L", "XL", "XXL", "XXXL", "N/A"].indexOf(talla) === -1) throw new Error("Seleccione una talla valida.");
+        if (!Number.isFinite(precioCompra) || precioCompra < 0 || !Number.isFinite(precioVenta) || precioVenta < 0) throw new Error("Los precios deben ser numeros validos mayores o iguales a cero.");
+        const product = findProductRow(sheet, data.id);
+        if (product.rowIndex === -1) throw new Error("Producto no encontrado.");
+        const columns = getHeaderMap_(sheet);
+        const tallaColumn = columns.talla;
+        if ([columns.stock, tallaColumn].some(function (index) { return index === undefined; })) throw new Error("La estructura de Productos no es valida.");
+        const values = sheet.getDataRange().getValues();
+        for (let rowIndex = 1; rowIndex < values.length; rowIndex++) {
+            if (rowIndex === product.rowIndex) continue;
+            const row = values[rowIndex];
+            if (String(row[1] || '').trim().toLowerCase() === nombre.toLowerCase() && String(row[2] || '').trim().toLowerCase() === codigo.toLowerCase() && String(row[tallaColumn] || 'N/A').toUpperCase() === talla) throw new Error("Ya existe otro producto con el mismo nombre, codigo y talla.");
+        }
+        sheet.getRange(product.rowIndex + 1, 2, 1, 5).setValues([[nombre, codigo, categoria, precioCompra, precioVenta]]);
+        sheet.getRange(product.rowIndex + 1, tallaColumn + 1).setValue(talla);
+        registrarAuditoria_(auth, "ACTUALIZAR_PRODUCTO", HOJA_PRODUCTOS, data.id, { nombre: nombre, codigo: codigo, categoria: categoria, talla: talla });
+        return { status: "success", message: "Producto actualizado correctamente." };
+    } finally {
+        lock.releaseLock();
+    }
+}
+
+function hasActiveProductTransactions_(productId) {
+    const ss = getSpreadsheet();
+    for (const sheetName of [HOJA_COMPRAS, HOJA_VENTAS]) {
+        const sheet = ss.getSheetByName(sheetName);
+        if (!sheet || sheet.getLastRow() < 2) continue;
+        const values = sheet.getDataRange().getValues();
+        const headers = values[0];
+        const productIndex = headers.indexOf("producto_id");
+        const statusIndex = headers.indexOf("estado");
+        if (productIndex === -1) continue;
+        for (let rowIndex = 1; rowIndex < values.length; rowIndex++) {
+            const status = statusIndex === -1 ? "ACTIVA" : String(values[rowIndex][statusIndex] || "ACTIVA").toUpperCase();
+            if (String(values[rowIndex][productIndex]) === String(productId) && status !== "ANULADA") return true;
+        }
+    }
+    return false;
+}
+
+function eliminarProducto_(data, auth) {
+    const lock = LockService.getScriptLock();
+    lock.waitLock(30000);
+    try {
+        const sheet = getSpreadsheet().getSheetByName(HOJA_PRODUCTOS);
+        if (!sheet) throw new Error("La pestana Productos no existe.");
+        const product = findProductRow(sheet, data.id);
+        if (product.rowIndex === -1) throw new Error("Producto no encontrado.");
+        const columns = getHeaderMap_(sheet);
+        if (columns.stock === undefined) throw new Error("La estructura de Productos no es valida.");
+        const stock = Number(product.rowData[columns.stock]) || 0;
+        if (stock > 0) throw new Error("No se puede eliminar un producto que tiene stock disponible.");
+        if (hasActiveProductTransactions_(data.id)) throw new Error("No se puede eliminar un producto con movimientos activos. Anule primero sus movimientos.");
+        sheet.deleteRow(product.rowIndex + 1);
+        registrarAuditoria_(auth, "ELIMINAR_PRODUCTO", HOJA_PRODUCTOS, data.id, { nombre: product.rowData[1], codigo: product.rowData[2] });
+        return { status: "success", message: "Producto eliminado correctamente." };
+    } finally {
+        lock.releaseLock();
+    }
+}
+
 function ensurePaymentColumn_(sheet) {
     const headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 1)).getValues()[0];
     if (headers.indexOf("metodo_pago") === -1) {
