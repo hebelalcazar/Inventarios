@@ -282,7 +282,8 @@
                 <form id="compraForm" class="form-grid">
                     <div class="form-group">
                         <label for="co_query">Buscar Producto (ID, Código o Nombre):</label>
-                        <input type="text" id="co_query" placeholder="Escriba para buscar y cargar datos" required>
+                        <input type="text" id="co_query" placeholder="Busque por nombre, codigo o categoria" required>
+                        <div id="co_product_suggestions" class="product-suggestions hidden" role="listbox" aria-label="Productos sugeridos"></div>
                     </div>
                     <div class="form-group">
                         <label for="co_cantidad">Cantidad Comprada:</label>
