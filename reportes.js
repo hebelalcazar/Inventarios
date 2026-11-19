@@ -97,6 +97,12 @@
         return quantity * price;
     }
 
+    function transactionCost(row) {
+        const quantity = Number(row.cantidad) || 0;
+        const cost = Number(row.costo_unitario) || 0;
+        return quantity * cost;
+    }
+
     function aggregateByPeriod(sales, purchases, period, referenceValue) {
         const range = getPeriodRange(period, referenceValue);
         const buckets = {};
@@ -113,7 +119,7 @@
                 const amount = transactionAmount(row, type);
                 if (type === 'venta') buckets[key].total_ventas += amount;
                 else buckets[key].total_compras += amount;
-                buckets[key].ganancia = buckets[key].total_ventas - buckets[key].total_compras;
+                if (type === 'venta') buckets[key].ganancia += amount - transactionCost(row);
             });
         };
         addRows(sales, 'venta');
@@ -121,5 +127,5 @@
         return Object.keys(buckets).sort().map(function (key) { return buckets[key]; });
     }
 
-    window.InventoryReports = { exportTableToCsv, exportRowsToCsv, printSummary, printDashboard, parseDate, getPeriodRange, filterTransactions, transactionAmount, aggregateByPeriod };
+    window.InventoryReports = { exportTableToCsv, exportRowsToCsv, printSummary, printDashboard, parseDate, getPeriodRange, filterTransactions, transactionAmount, transactionCost, aggregateByPeriod };
 })();

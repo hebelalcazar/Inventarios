@@ -155,7 +155,8 @@ body {
   color: var(--gray-800);
   line-height: 1.5;
   min-height: 100vh;
-  overflow-x: hidden;
+  /* Permite desplazamiento horizontal de toda la aplicación desde el navegador. */
+  overflow-x: auto;
   font-size: 14px;
 }
 
@@ -554,7 +555,9 @@ h2 i {
 /* ============ TABLAS RESPONSIVE MEJORADAS ============ */
 .data-table-container {
   width: 100%;
+  max-width: 100%;
   overflow-x: auto;
+  overflow-y: hidden;
   border-radius: var(--radius-lg);
   border: 1px solid var(--gray-200);
   background: var(--light-color);
@@ -564,10 +567,42 @@ h2 i {
 }
 
 .data-table {
+  width: max-content;
+  min-width: 760px;
+  table-layout: auto;
   width: 100%;
   min-width: 600px; /* Ancho mínimo para mantener legibilidad */
   border-collapse: collapse;
   font-size: 0.875rem;
+}
+
+.data-table {
+  width: 1200px;
+  min-width: 1200px;
+  max-width: none;
+}
+
+.data-table-container {
+  scrollbar-width: thin;
+  scrollbar-color: var(--primary-color) var(--gray-200);
+}
+
+.data-table-container::-webkit-scrollbar {
+  height: 10px;
+}
+
+.data-table-container::-webkit-scrollbar-track {
+  background: var(--gray-200);
+  border-radius: 999px;
+}
+
+.data-table-container::-webkit-scrollbar-thumb {
+  background: var(--primary-color);
+  border-radius: 999px;
+}
+
+.data-table-container::-webkit-scrollbar-thumb:hover {
+  background: var(--primary-dark);
 }
 
 .data-table thead {

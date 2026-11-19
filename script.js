@@ -371,15 +371,16 @@
                 const compras = InventoryReports.filterTransactions(rawData.compras, filters.period, filters.date);
                 const totalVentas = ventas.reduce((sum, row) => sum + InventoryReports.transactionAmount(row, 'venta'), 0);
                 const totalCompras = compras.reduce((sum, row) => sum + InventoryReports.transactionAmount(row, 'compra'), 0);
-                const ganancias = totalVentas - totalCompras;
+                const costoVentas = ventas.reduce((sum, row) => sum + InventoryReports.transactionCost(row), 0);
+                const ganancias = totalVentas - costoVentas;
                 document.getElementById('totalVentas').textContent = `$${totalVentas.toFixed(2)}`;
                 document.getElementById('totalCompras').textContent = `$${totalCompras.toFixed(2)}`;
                 document.getElementById('totalGanancias').textContent = `$${ganancias.toFixed(2)}`;
                 document.getElementById('totalGastos').textContent = `$${totalCompras.toFixed(2)}`;
                 const gananciasElement = document.getElementById('totalGanancias');
                 gananciasElement.style.color = ganancias > 0 ? 'var(--secondary-color)' : ganancias < 0 ? 'var(--danger-color)' : '#666';
-                displayStatus('statusDashboard', 'success', `Periodo: ${filters.period}. Ventas: $${totalVentas.toFixed(2)} | Compras: $${totalCompras.toFixed(2)} | Ganancia: $${ganancias.toFixed(2)}`);
-                return { totalVentas, totalCompras, ganancias };
+                displayStatus('statusDashboard', 'success', `Periodo: ${filters.period}. Ventas: $${totalVentas.toFixed(2)} | Costo ventas: $${costoVentas.toFixed(2)} | Ganancia: $${ganancias.toFixed(2)}`);
+                return { totalVentas, totalCompras, costoVentas, ganancias };
             } catch (error) {
                 displayStatus('statusDashboard', 'error', `Error al calcular resumen: ${error.message}`);
                 return { totalVentas: 0, totalCompras: 0, ganancias: 0 };
@@ -658,7 +659,8 @@
                 document.getElementById('p_precio_compra').value = Number(product.precio_compra || 0).toFixed(2);
                 document.getElementById('p_precio_venta').value = Number(product.precio_venta || 0).toFixed(2);
                 document.getElementById('p_stock').value = Number(product.stock || 0);
-                document.getElementById('p_stock').readOnly = true;
+                document.querySelector('label[for="p_stock"]').textContent = 'Stock actual:';
+                document.getElementById('p_stock').readOnly = false;
                 document.getElementById('productoSubmitBtn').innerHTML = '<i class="fas fa-save"></i> Guardar cambios';
                 document.getElementById('cancelarEdicionProductoBtn').classList.remove('hidden');
                 document.getElementById('productos').scrollIntoView({ behavior: 'smooth' });
@@ -670,6 +672,7 @@
         function cancelarEdicionProducto() {
             productoEditandoId = '';
             document.getElementById('productoForm').reset();
+            document.querySelector('label[for="p_stock"]').textContent = 'Stock Inicial:';
             document.getElementById('p_stock').readOnly = false;
             document.getElementById('productoSubmitBtn').innerHTML = '<i class="fas fa-save"></i> Registrar Nuevo Producto';
             document.getElementById('cancelarEdicionProductoBtn').classList.add('hidden');

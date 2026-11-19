@@ -347,10 +347,12 @@ function actualizarProducto_(data, auth) {
         const talla = String(data.talla || '').toUpperCase();
         const precioCompra = Number(data.precio_compra);
         const precioVenta = Number(data.precio_venta);
+        const stock = Number(data.stock);
         if (!nombre || !codigo || !categoria) throw new Error("Nombre, codigo y categoria son obligatorios.");
         if (nombre.length > 150 || codigo.length > 80 || categoria.length > 100) throw new Error("Los datos del producto superan la longitud permitida.");
         if (["S", "M", "L", "XL", "XXL", "XXXL", "N/A"].indexOf(talla) === -1) throw new Error("Seleccione una talla valida.");
         if (!Number.isFinite(precioCompra) || precioCompra < 0 || !Number.isFinite(precioVenta) || precioVenta < 0) throw new Error("Los precios deben ser numeros validos mayores o iguales a cero.");
+        if (!Number.isInteger(stock) || stock < 0) throw new Error("El stock debe ser un numero entero mayor o igual a cero.");
         const product = findProductRow(sheet, data.id);
         if (product.rowIndex === -1) throw new Error("Producto no encontrado.");
         const columns = getHeaderMap_(sheet);
@@ -362,10 +364,13 @@ function actualizarProducto_(data, auth) {
             const row = values[rowIndex];
             if (String(row[1] || '').trim().toLowerCase() === nombre.toLowerCase() && String(row[2] || '').trim().toLowerCase() === codigo.toLowerCase() && String(row[tallaColumn] || 'N/A').toUpperCase() === talla) throw new Error("Ya existe otro producto con el mismo nombre, codigo y talla.");
         }
+        const stockAnterior = Number(product.rowData[columns.stock]) || 0;
         sheet.getRange(product.rowIndex + 1, 2, 1, 5).setValues([[nombre, codigo, categoria, precioCompra, precioVenta]]);
         sheet.getRange(product.rowIndex + 1, tallaColumn + 1).setValue(talla);
-        registrarAuditoria_(auth, "ACTUALIZAR_PRODUCTO", HOJA_PRODUCTOS, data.id, { nombre: nombre, codigo: codigo, categoria: categoria, talla: talla });
-        return { status: "success", message: "Producto actualizado correctamente." };
+        sheet.getRange(product.rowIndex + 1, columns.stock + 1).setValue(stock);
+        notificarStockBajo_(data.id, nombre, stock, auth);
+        registrarAuditoria_(auth, "ACTUALIZAR_PRODUCTO", HOJA_PRODUCTOS, data.id, { nombre: nombre, codigo: codigo, categoria: categoria, talla: talla, stock_anterior: stockAnterior, stock_posterior: stock });
+        return { status: "success", message: "Producto y stock actualizados correctamente." };
     } finally {
         lock.releaseLock();
     }
@@ -439,6 +444,11 @@ function ensureTransactionIntegrityColumns_(sheet) {
     return headers;
 }
 
+function ensureSaleCostColumn_(sheet) {
+    const headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 1)).getValues()[0];
+    if (headers.indexOf("costo_unitario") === -1) sheet.getRange(1, headers.length + 1).setValue("costo_unitario");
+}
+
 function getHeaderMap_(sheet) {
     const headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 1)).getValues()[0];
     const map = {};
@@ -496,6 +506,7 @@ function registrarTransaccionProtegida_(data, auth) {
     ensureTransactionSizeColumn_(sheet);
     ensureTransactionStatusColumn_(sheet);
     ensureTransactionIntegrityColumns_(sheet);
+    if (!isCompra) ensureSaleCostColumn_(sheet);
     const requestId = String(data.request_id || generateUniqueAppId()).trim();
     if (requestId.length > 120) return { status: "error", message: "El identificador de solicitud no es valido." };
     if (findTransactionByRequestId_(requestId)) return { status: "warning", message: "Esta transaccion ya fue procesada." };
@@ -534,6 +545,7 @@ function registrarTransaccionProtegida_(data, auth) {
     
     let stockActual = parseFloat(rowData[stockColIndex]) || 0;
     const precioActual = isCompra ? (parseFloat(rowData[precioCompraColIndex]) || 0) : (parseFloat(rowData[precioVentaColIndex]) || 0);
+    const costoUnitario = isCompra ? 0 : (parseFloat(rowData[precioCompraColIndex]) || 0);
     const precioProductoColumn = isCompra ? precioCompraColIndex : precioVentaColIndex;
     const stockOriginal = rowData[stockColIndex];
     const precioProductoOriginal = rowData[precioProductoColumn];
@@ -575,6 +587,10 @@ function registrarTransaccionProtegida_(data, auth) {
     try {
         sheet.appendRow(newRow);
         transactionRowIndex = sheet.getLastRow();
+        if (!isCompra) {
+            const costColumn = getHeaderMap_(sheet).costo_unitario;
+            if (costColumn !== undefined) sheet.getRange(transactionRowIndex, costColumn + 1).setValue(costoUnitario);
+        }
     } catch (e) {
         return { status: "error", message: `Error al registrar transacción: ${e.message}` };
     }
@@ -746,8 +762,54 @@ function reportAmount_(row, type) {
     return quantity * price;
 }
 
+function getReportProductCostMap_() {
+    const sheet = getSpreadsheet().getSheetByName(HOJA_PRODUCTOS);
+    const costs = {};
+    if (!sheet || sheet.getLastRow() < 2) return costs;
+    const columns = getHeaderMap_(sheet);
+    const values = sheet.getDataRange().getValues();
+    const idColumn = columns.id === undefined ? 0 : columns.id;
+    const costColumn = columns.precio_compra;
+    if (costColumn === undefined) return costs;
+    values.slice(1).forEach(function (row) {
+        const id = String(row[idColumn] || "").trim();
+        if (id) costs[id] = Number(row[costColumn]) || 0;
+    });
+    return costs;
+}
+
+function reportCostAmount_(row, productCosts) {
+    const quantity = Number(row.cantidad) || 0;
+    const historicalCost = row.costo_unitario !== "" && row.costo_unitario !== null && row.costo_unitario !== undefined
+        ? Number(row.costo_unitario)
+        : Number(productCosts[String(row.producto_id || "").trim()]) || 0;
+    return quantity * (Number.isFinite(historicalCost) ? historicalCost : 0);
+}
+
+function enrichReportSalesWithCost_(rows, productCosts) {
+    return rows.map(function (row) {
+        const enriched = {};
+        Object.keys(row).forEach(function (key) { enriched[key] = row[key]; });
+        if (enriched.costo_unitario === undefined || enriched.costo_unitario === "") {
+            enriched.costo_unitario = Number(productCosts[String(row.producto_id || "").trim()]) || 0;
+        }
+        return enriched;
+    });
+}
+
+function stripInternalReportFields_(rows) {
+    return rows.map(function (row) {
+        const clean = {};
+        Object.keys(row).forEach(function (key) {
+            if (key !== "costo_unitario") clean[key] = row[key];
+        });
+        return clean;
+    });
+}
+
 function aggregateReportRows_(ventas, compras, range) {
     const buckets = {};
+    const productCosts = getReportProductCostMap_();
     const addRows = function (rows, type) {
         rows.forEach(function (row) {
             const date = parseReportDate_(row.fecha);
@@ -756,9 +818,12 @@ function aggregateReportRows_(ventas, compras, range) {
                 ? date.getFullYear() + "-" + String(date.getMonth() + 1).padStart(2, "0")
                 : date.getFullYear() + "-" + String(date.getMonth() + 1).padStart(2, "0") + "-" + String(date.getDate()).padStart(2, "0");
             if (!buckets[key]) buckets[key] = { fecha: key, total_ventas: 0, total_compras: 0, ganancia: 0 };
-            if (type === "venta") buckets[key].total_ventas += reportAmount_(row, type);
-            else buckets[key].total_compras += reportAmount_(row, type);
-            buckets[key].ganancia = buckets[key].total_ventas - buckets[key].total_compras;
+            if (type === "venta") {
+                buckets[key].total_ventas += reportAmount_(row, type);
+                buckets[key].ganancia += reportAmount_(row, type) - reportCostAmount_(row, productCosts);
+            } else {
+                buckets[key].total_compras += reportAmount_(row, type);
+            }
         });
     };
     addRows(ventas, "venta");
@@ -772,14 +837,15 @@ function getReportePeriodo_(tipo, periodo, fecha) {
     const range = getReportRange_(periodo, fecha);
     const ventas = getReportRows_(HOJA_VENTAS, range);
     const compras = getReportRows_(HOJA_COMPRAS, range);
+    const productCosts = getReportProductCostMap_();
     const response = {
         status: "success",
         tipo: normalizedType,
         periodo: range.period,
         fecha_inicio: range.start,
         fecha_fin: range.end,
-        data: normalizedType === "ventas" ? ventas : normalizedType === "compras" ? compras : [],
-        ventas: ventas,
+        data: normalizedType === "ventas" ? stripInternalReportFields_(ventas) : normalizedType === "compras" ? compras : [],
+        ventas: enrichReportSalesWithCost_(ventas, productCosts),
         compras: compras,
         resumen: aggregateReportRows_(ventas, compras, range)
     };
